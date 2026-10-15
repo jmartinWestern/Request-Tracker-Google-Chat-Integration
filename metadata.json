@@ -1,0 +1,6 @@
+{
+  "name": "RT Connect - Request Tracker & Google Chat Integration",
+  "description": "Bidirectional integration bridge between Request Tracker (RT) REST 2.0 and Google Chat with webhook processing, direct messaging, and interactive ticket actions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

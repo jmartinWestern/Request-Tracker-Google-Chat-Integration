@@ -1,0 +1,583 @@
+{
+  "config": {
+    "rtBaseUrl": "https://rt.example.org",
+    "rtAuthToken": "",
+    "defaultQueue": "IT Support",
+    "googleChatSpaceWebhookUrl": "",
+    "webhookSecret": "[REDACTED]",
+    "enableUserDm": true,
+    "enableSpaceAlerts": true
+  },
+  "webhookLogs": [
+    {
+      "id": "wh-sim-1792086068082",
+      "timestamp": "2026-10-15T17:41:08.082Z",
+      "event": "ticket_created",
+      "ticketId": 11208,
+      "subject": "Smartboard Touch Calibration Drift",
+      "queue": "Classroom Tech",
+      "status": "new",
+      "requestorEmail": "sarah.connor@example.org",
+      "resolvedRtUserId": 3072,
+      "resolvedRtUserName": "sarah.connor",
+      "dmDispatchStatus": "sent",
+      "dmDispatchMessage": "Direct card sent to sarah.connor@example.org (RT User ID #3072)",
+      "spaceDispatchStatus": "sent",
+      "spaceDispatchMessage": "Card rendered in Chat Space stream",
+      "rawPayload": {
+        "event": "ticket_created",
+        "ticket": {
+          "id": 11208,
+          "Subject": "Smartboard Touch Calibration Drift",
+          "Queue": "Classroom Tech",
+          "Status": "new",
+          "Priority": "Medium",
+          "Requestor": "sarah.connor@example.org",
+          "RequestorName": "sarah.connor",
+          "Created": "2026-10-15T17:41:08.082Z",
+          "Content": "Interactive touch points in Room 204 are misaligned.",
+          "Url": "https://rt.example.org/Ticket/Display.html?id=11208"
+        },
+        "secretToken": "[REDACTED]"
+      },
+      "cardV2Preview": {
+        "cardId": "rt_ticket_11208",
+        "card": {
+          "header": {
+            "title": "RT #11208: Smartboard Touch Calibration Drift",
+            "subtitle": "Queue: Classroom Tech · ⚪ NEW · Priority: Medium",
+            "imageType": "SQUARE"
+          },
+          "sections": [
+            {
+              "header": "Ticket Details",
+              "collapsible": false,
+              "widgets": [
+                {
+                  "decoratedText": {
+                    "topLabel": "Requestor (Unique RT Identifier)",
+                    "text": "sarah.connor@example.org (sarah.connor)",
+                    "bottomLabel": "RT User ID: #3072"
+                  }
+                },
+                {
+                  "decoratedText": {
+                    "topLabel": "Created Timestamp",
+                    "text": "2026-10-15T17:41:08.082Z"
+                  }
+                },
+                {
+                  "textParagraph": {
+                    "text": "Interactive touch points in Room 204 are misaligned."
+                  }
+                }
+              ]
+            },
+            {
+              "header": "Quick Status Actions",
+              "collapsible": false,
+              "widgets": [
+                {
+                  "buttonList": {
+                    "buttons": [
+                      {
+                        "text": "Open",
+                        "onClick": {
+                          "action": {
+                            "function": "update_ticket_status",
+                            "parameters": [
+                              {
+                                "key": "ticketId",
+                                "value": "11208"
+                              },
+                              {
+                                "key": "status",
+                                "value": "open"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "text": "Resolve",
+                        "onClick": {
+                          "action": {
+                            "function": "update_ticket_status",
+                            "parameters": [
+                              {
+                                "key": "ticketId",
+                                "value": "11208"
+                              },
+                              {
+                                "key": "status",
+                                "value": "resolved"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "text": "Stall",
+                        "onClick": {
+                          "action": {
+                            "function": "update_ticket_status",
+                            "parameters": [
+                              {
+                                "key": "ticketId",
+                                "value": "11208"
+                              },
+                              {
+                                "key": "status",
+                                "value": "stalled"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "text": "View in RT ↗",
+                        "onClick": {
+                          "openLink": {
+                            "url": "https://rt.example.org/Ticket/Display.html?id=11208"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "header": "Respond directly to Ticket",
+              "collapsible": true,
+              "widgets": [
+                {
+                  "textParagraph": {
+                    "text": "💡 Reply in this chat thread or use the correspondence composer below to post updates directly to RT."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "wh-seed-10482",
+      "timestamp": "2026-10-15T17:25:46.588Z",
+      "event": "ticket_created",
+      "ticketId": "10482",
+      "subject": "Network switch port flap in Media Center Lab",
+      "queue": "IT Support",
+      "status": "stalled",
+      "priority": "High",
+      "requestorEmail": "jmartin@example.org",
+      "resolvedRtUserId": "482",
+      "resolvedRtUserName": "jmartin",
+      "dmDispatchStatus": "sent",
+      "dmDispatchMessage": "Direct card sent to jmartin@example.org",
+      "spaceDispatchStatus": "sent",
+      "spaceDispatchMessage": "Card posted to #it-support-alerts space",
+      "rawPayload": {
+        "event": "ticket_created",
+        "ticket": {
+          "id": 10482,
+          "Subject": "Network switch port flap in Media Center Lab",
+          "Queue": "IT Support",
+          "Status": "open",
+          "Priority": "High",
+          "Requestor": "jmartin@example.org",
+          "RequestorName": "Example Agent",
+          "Created": "2026-10-15T17:25:46.588Z",
+          "Content": "Port 14 on switch SW-MC-02 is reporting intermittent link renegotiation errors affecting 8 student workstations.",
+          "Url": "https://rt.example.org/Ticket/Display.html?id=10482"
+        }
+      },
+      "cardV2Preview": {
+        "cardId": "rt_ticket_10482",
+        "card": {
+          "header": {
+            "title": "RT #10482: Network switch port flap in Media Center Lab",
+            "subtitle": "Queue: IT Support · 🟠 Stalled · Priority: High",
+            "imageType": "SQUARE"
+          },
+          "sections": [
+            {
+              "header": "Ticket Details",
+              "collapsible": false,
+              "widgets": [
+                {
+                  "decoratedText": {
+                    "topLabel": "Requestor (Unique RT Identifier)",
+                    "text": "jmartin@example.org (Example Agent)",
+                    "bottomLabel": "RT User ID: #482"
+                  }
+                },
+                {
+                  "decoratedText": {
+                    "topLabel": "Created Timestamp",
+                    "text": "2026-10-15T17:25:46.589Z"
+                  }
+                },
+                {
+                  "textParagraph": {
+                    "text": "Port 14 on switch SW-MC-02 is reporting intermittent link renegotiation errors affecting 8 student workstations."
+                  }
+                }
+              ]
+            },
+            {
+              "header": "Quick Status Actions",
+              "collapsible": false,
+              "widgets": [
+                {
+                  "buttonList": {
+                    "buttons": [
+                      {
+                        "text": "Open",
+                        "onClick": {
+                          "action": {
+                            "function": "update_ticket_status",
+                            "parameters": [
+                              {
+                                "key": "ticketId",
+                                "value": "10482"
+                              },
+                              {
+                                "key": "status",
+                                "value": "open"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "text": "Resolve",
+                        "onClick": {
+                          "action": {
+                            "function": "update_ticket_status",
+                            "parameters": [
+                              {
+                                "key": "ticketId",
+                                "value": "10482"
+                              },
+                              {
+                                "key": "status",
+                                "value": "resolved"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "text": "Stall",
+                        "onClick": {
+                          "action": {
+                            "function": "update_ticket_status",
+                            "parameters": [
+                              {
+                                "key": "ticketId",
+                                "value": "10482"
+                              },
+                              {
+                                "key": "status",
+                                "value": "stalled"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "text": "View in RT ↗",
+                        "onClick": {
+                          "openLink": {
+                            "url": "https://rt.example.org/Ticket/Display.html?id=10482"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "header": "Respond directly to Ticket",
+              "collapsible": true,
+              "widgets": [
+                {
+                  "textParagraph": {
+                    "text": "💡 Reply in this chat thread or use the correspondence composer below to post updates directly to RT."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "wh-seed-10481",
+      "timestamp": "2026-10-15T16:55:46.589Z",
+      "event": "ticket_created",
+      "ticketId": "10481",
+      "subject": "New teacher onboarding: Google Classroom & RT account setup",
+      "queue": "Accounts",
+      "status": "resolved",
+      "priority": "Medium",
+      "requestorEmail": "sarah.connor@example.org",
+      "resolvedRtUserId": "399",
+      "resolvedRtUserName": "sconnor",
+      "dmDispatchStatus": "sent",
+      "dmDispatchMessage": "Direct card sent to sarah.connor@example.org",
+      "spaceDispatchStatus": "sent",
+      "spaceDispatchMessage": "Card posted to #it-support-alerts space",
+      "rawPayload": {
+        "event": "ticket_created",
+        "ticket": {
+          "id": 10481,
+          "Subject": "New teacher onboarding: Google Classroom & RT account setup",
+          "Queue": "Accounts",
+          "Status": "resolved",
+          "Priority": "Medium",
+          "Requestor": "sarah.connor@example.org",
+          "RequestorName": "Example Requestor",
+          "Created": "2026-10-15T16:55:46.589Z",
+          "Content": "Please provision email, Google Workspace Chat, and RT access for our new STEM teacher starting Monday.",
+          "Url": "https://rt.example.org/Ticket/Display.html?id=10481"
+        }
+      },
+      "cardV2Preview": {
+        "cardId": "rt_ticket_10481",
+        "card": {
+          "header": {
+            "title": "RT #10481: New teacher onboarding: Google Classroom & RT account setup",
+            "subtitle": "Queue: Accounts · 🟢 Resolved · Priority: Medium",
+            "imageType": "SQUARE"
+          },
+          "sections": [
+            {
+              "header": "Ticket Details",
+              "collapsible": false,
+              "widgets": [
+                {
+                  "decoratedText": {
+                    "topLabel": "Requestor (Unique RT Identifier)",
+                    "text": "sarah.connor@example.org (Example Requestor)",
+                    "bottomLabel": "RT User ID: #399"
+                  }
+                },
+                {
+                  "decoratedText": {
+                    "topLabel": "Created Timestamp",
+                    "text": "2026-10-15T16:55:46.589Z"
+                  }
+                },
+                {
+                  "textParagraph": {
+                    "text": "Please provision email, Google Workspace Chat, and RT access for our new STEM teacher starting Monday."
+                  }
+                }
+              ]
+            },
+            {
+              "header": "Quick Status Actions",
+              "collapsible": false,
+              "widgets": [
+                {
+                  "buttonList": {
+                    "buttons": [
+                      {
+                        "text": "Open",
+                        "onClick": {
+                          "action": {
+                            "function": "update_ticket_status",
+                            "parameters": [
+                              {
+                                "key": "ticketId",
+                                "value": "10481"
+                              },
+                              {
+                                "key": "status",
+                                "value": "open"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "text": "Resolve",
+                        "onClick": {
+                          "action": {
+                            "function": "update_ticket_status",
+                            "parameters": [
+                              {
+                                "key": "ticketId",
+                                "value": "10481"
+                              },
+                              {
+                                "key": "status",
+                                "value": "resolved"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "text": "Stall",
+                        "onClick": {
+                          "action": {
+                            "function": "update_ticket_status",
+                            "parameters": [
+                              {
+                                "key": "ticketId",
+                                "value": "10481"
+                              },
+                              {
+                                "key": "status",
+                                "value": "stalled"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "text": "View in RT ↗",
+                        "onClick": {
+                          "openLink": {
+                            "url": "https://rt.example.org/Ticket/Display.html?id=10481"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "header": "Respond directly to Ticket",
+              "collapsible": true,
+              "widgets": [
+                {
+                  "textParagraph": {
+                    "text": "💡 Reply in this chat thread or use the correspondence composer below to post updates directly to RT."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "chatInteractionLogs": [
+    {
+      "id": "act-1792086051386-208",
+      "timestamp": "2026-10-15T17:40:51.386Z",
+      "ticketId": "10482",
+      "actorEmail": "jmartin@example.org",
+      "actorName": "Example Agent",
+      "actionType": "status_change",
+      "previousValue": "open",
+      "newValue": "stalled",
+      "rtSyncStatus": "synced",
+      "rtResponseMessage": "Status updated to 'stalled' in RT mock store"
+    },
+    {
+      "id": "act-seed-1",
+      "timestamp": "2026-10-15T17:30:46.589Z",
+      "ticketId": "10481",
+      "actorEmail": "jmartin@example.org",
+      "actorName": "Example Agent",
+      "actionType": "status_change",
+      "previousValue": "open",
+      "newValue": "resolved",
+      "rtSyncStatus": "synced",
+      "rtResponseMessage": "Status changed from 'open' to 'resolved' via RT REST 2.0 PUT /ticket/10481"
+    }
+  ],
+  "tickets": [
+    {
+      "id": 11208,
+      "Subject": "Smartboard Touch Calibration Drift",
+      "Status": "new",
+      "Queue": "Classroom Tech",
+      "Priority": "Medium",
+      "RequestorEmail": "sarah.connor@example.org",
+      "RequestorName": "sarah.connor",
+      "rtUserId": 3072,
+      "Created": "2026-10-15T17:41:08.082Z",
+      "Content": "Interactive touch points in Room 204 are misaligned.",
+      "History": [
+        {
+          "id": 1,
+          "type": "Create",
+          "actor": "sarah.connor@example.org",
+          "content": "Interactive touch points in Room 204 are misaligned.",
+          "timestamp": "2026-10-15T17:41:08.082Z"
+        }
+      ]
+    },
+    {
+      "id": 10482,
+      "Subject": "Network switch port flap in Media Center Lab",
+      "Status": "stalled",
+      "Queue": "IT Support",
+      "Priority": "High",
+      "RequestorEmail": "jmartin@example.org",
+      "RequestorName": "Example Agent",
+      "Owner": {
+        "id": 482,
+        "Name": "jmartin"
+      },
+      "Created": "2026-10-15T17:25:46.589Z",
+      "Content": "Port 14 on switch SW-MC-02 is reporting intermittent link renegotiation errors affecting 8 student workstations.",
+      "History": [
+        {
+          "id": 1,
+          "type": "Create",
+          "actor": "jmartin@example.org",
+          "content": "Ticket created via RT Webhook scrip",
+          "timestamp": "2026-10-15T17:25:46.589Z"
+        },
+        {
+          "id": 2,
+          "type": "StatusChange",
+          "actor": "jmartin@example.org",
+          "content": "Status updated to 'stalled' directly via Google Chat button",
+          "timestamp": "2026-10-15T17:40:51.386Z"
+        }
+      ]
+    },
+    {
+      "id": 10481,
+      "Subject": "New teacher onboarding: Google Classroom & RT account setup",
+      "Status": "resolved",
+      "Queue": "Accounts",
+      "Priority": "Medium",
+      "RequestorEmail": "sarah.connor@example.org",
+      "RequestorName": "Example Requestor",
+      "Owner": {
+        "id": 482,
+        "Name": "jmartin"
+      },
+      "Created": "2026-10-15T16:55:46.589Z",
+      "Content": "Please provision email, Google Workspace Chat, and RT access for our new STEM teacher starting Monday.",
+      "History": [
+        {
+          "id": 1,
+          "type": "Create",
+          "actor": "sarah.connor@example.org",
+          "content": "Ticket created via RT Webhook scrip",
+          "timestamp": "2026-10-15T16:55:46.589Z"
+        },
+        {
+          "id": 2,
+          "type": "StatusChange",
+          "actor": "jmartin@example.org",
+          "content": "Status changed to 'resolved' via Google Chat Action Card",
+          "timestamp": "2026-10-15T17:30:46.589Z"
+        }
+      ]
+    }
+  ]
+}

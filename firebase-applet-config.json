@@ -1,0 +1,11 @@
+{
+  "projectId": "example-firebase-project",
+  "appId": "1:000000000000:web:example",
+  "apiKey": "REPLACE_WITH_FIREBASE_WEB_API_KEY",
+  "authDomain": "example-firebase-project.firebaseapp.com",
+  "storageBucket": "example-firebase-project.firebasestorage.app",
+  "messagingSenderId": "854712641594",
+  "measurementId": "",
+  "oAuthClientId": "000000000000-example.apps.googleusercontent.com",
+  "recaptchaSiteKey": ""
+}
