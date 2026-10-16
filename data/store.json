@@ -4,8 +4,8 @@
     "rtAuthToken": "",
     "defaultQueue": "IT Support",
     "googleChatSpaceWebhookUrl": "",
-    "webhookSecret": "[REDACTED]",
-    "enableUserDm": true,
+    "webhookSecret": "",
+    "enableUserDm": false,
     "enableSpaceAlerts": true
   },
   "webhookLogs": [
@@ -37,8 +37,7 @@
           "Created": "2026-10-15T17:41:08.082Z",
           "Content": "Interactive touch points in Room 204 are misaligned.",
           "Url": "https://rt.example.org/Ticket/Display.html?id=11208"
-        },
-        "secretToken": "[REDACTED]"
+        }
       },
       "cardV2Preview": {
         "cardId": "rt_ticket_11208",
@@ -579,5 +578,7 @@
         }
       ]
     }
-  ]
+  ],
+  "eventReceipts": {},
+  "operationReceipts": {}
 }

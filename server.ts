@@ -1,22 +1,61 @@
 import express, { Request, Response } from 'express';
+import crypto from 'node:crypto';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
+import { GoogleAuth, OAuth2Client } from 'google-auth-library';
+import {
+  redactPayload,
+  validateStatus,
+  validateText,
+  validateTicketPayload,
+  verifyRtSignature,
+  withRetry,
+} from './src/server/security';
 
 dotenv.config();
+
+function loadSecret(name: string) {
+  const filePath = process.env[`${name}_FILE`];
+  if (!filePath) return process.env[name] || '';
+  try {
+    return fs.readFileSync(filePath, 'utf8').trim();
+  } catch {
+    throw new Error(`Unable to read required secret file for ${name}`);
+  }
+}
+
+function envBoolean(name: string, fallback: boolean) {
+  const value = process.env[name];
+  return value === undefined ? fallback : value.toLowerCase() === 'true';
+}
+
+for (const secretName of ['RT_AUTH_TOKEN', 'RT_WEBHOOK_SECRET', 'GOOGLE_CHAT_SPACE_WEBHOOK_URL', 'RT_CONNECT_ADMIN_TOKEN']) {
+  if (process.env[`${secretName}_FILE`]) process.env[secretName] = loadSecret(secretName);
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
+const MAX_BODY_BYTES = Number(process.env.MAX_BODY_BYTES || 128 * 1024);
 
-app.use(express.json());
+function cryptoHash(value: string) {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+app.use(express.json({
+  limit: MAX_BODY_BYTES,
+  verify: (req, _res, buffer) => {
+    (req as Request & { rawBody?: string }).rawBody = buffer.toString('utf8');
+  },
+}));
 
 // Persistent store setup
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_DIR = process.env.RT_CONNECT_DATA_DIR || path.join(__dirname, 'data');
 const STORE_PATH = path.join(DATA_DIR, 'store.json');
 
 if (!fs.existsSync(DATA_DIR)) {
@@ -36,6 +75,8 @@ interface AppStore {
   webhookLogs: any[];
   chatInteractionLogs: any[];
   tickets: any[];
+  eventReceipts: Record<string, { status: string; response?: unknown; updatedAt: string }>;
+  operationReceipts: Record<string, { status: string; updatedAt: string }>;
 }
 
 const defaultStore: AppStore = {
@@ -44,9 +85,9 @@ const defaultStore: AppStore = {
     rtAuthToken: process.env.RT_AUTH_TOKEN || '',
     defaultQueue: 'IT Support',
     googleChatSpaceWebhookUrl: process.env.GOOGLE_CHAT_SPACE_WEBHOOK_URL || '',
-    webhookSecret: '[REDACTED]',
-    enableUserDm: true,
-    enableSpaceAlerts: true,
+    webhookSecret: process.env.RT_WEBHOOK_SECRET || '',
+    enableUserDm: envBoolean('RT_ENABLE_USER_DM', false),
+    enableSpaceAlerts: envBoolean('RT_ENABLE_SPACE_ALERTS', true),
   },
   webhookLogs: [
     {
@@ -203,13 +244,29 @@ const defaultStore: AppStore = {
       ],
     },
   ],
+  eventReceipts: {},
+  operationReceipts: {},
 };
 
 function getStore(): AppStore {
   try {
     if (fs.existsSync(STORE_PATH)) {
       const data = fs.readFileSync(STORE_PATH, 'utf-8');
-      return JSON.parse(data);
+      const stored = JSON.parse(data);
+      return {
+        ...defaultStore,
+        ...stored,
+        config: {
+          ...defaultStore.config,
+          ...stored.config,
+          rtAuthToken: process.env.RT_AUTH_TOKEN || stored.config.rtAuthToken || defaultStore.config.rtAuthToken,
+          webhookSecret: process.env.RT_WEBHOOK_SECRET || stored.config.webhookSecret || defaultStore.config.webhookSecret,
+          enableUserDm: envBoolean('RT_ENABLE_USER_DM', stored.config.enableUserDm ?? defaultStore.config.enableUserDm),
+          enableSpaceAlerts: envBoolean('RT_ENABLE_SPACE_ALERTS', stored.config.enableSpaceAlerts ?? defaultStore.config.enableSpaceAlerts),
+        },
+        eventReceipts: stored.eventReceipts || {},
+        operationReceipts: stored.operationReceipts || {},
+      };
     }
   } catch (err) {
     console.error('Error reading store:', err);
@@ -219,11 +276,57 @@ function getStore(): AppStore {
 
 function saveStore(store: AppStore) {
   try {
-    fs.writeFileSync(STORE_PATH, JSON.stringify(store, null, 2), 'utf-8');
+    const temporaryPath = `${STORE_PATH}.tmp-${process.pid}`;
+    fs.writeFileSync(temporaryPath, JSON.stringify(store, null, 2), 'utf-8');
+    fs.renameSync(temporaryPath, STORE_PATH);
   } catch (err) {
     console.error('Error writing store:', err);
   }
 }
+
+function getSafeConfig(config: AppStore['config']) {
+  return {
+    ...config,
+    rtAuthToken: config.rtAuthToken ? '[configured]' : '',
+    webhookSecret: config.webhookSecret ? '[configured]' : '',
+    googleChatSpaceWebhookUrl: config.googleChatSpaceWebhookUrl ? '[configured]' : '',
+  };
+}
+
+function requireAdmin(req: Request, res: Response, next: () => void) {
+  if (req.path === '/webhooks/rt-ticket-created' || req.path === '/chat/interactive') return next();
+  if (process.env.NODE_ENV !== 'production') return next();
+  const expected = process.env.RT_CONNECT_ADMIN_TOKEN;
+  if (!expected) return res.status(503).json({ error: 'Admin authentication is not configured' });
+  const provided = req.header('x-rt-connect-admin-token');
+  if (!provided || provided !== expected) return res.status(401).json({ error: 'Admin authentication required' });
+  next();
+}
+
+const chatTokenVerifier = new OAuth2Client();
+async function requireChatIdentity(req: Request, res: Response, next: () => void) {
+  const adminToken = req.header('x-rt-connect-admin-token');
+  if (process.env.NODE_ENV === 'production' && process.env.RT_CONNECT_ADMIN_TOKEN && adminToken === process.env.RT_CONNECT_ADMIN_TOKEN) return next();
+  if (process.env.NODE_ENV !== 'production' && !req.header('authorization')) return next();
+  if (process.env.NODE_ENV === 'production' && !process.env.CHAT_AUDIENCE) {
+    return res.status(503).json({ error: 'CHAT_AUDIENCE is not configured' });
+  }
+  const authorization = req.header('authorization') || '';
+  if (!authorization.startsWith('Bearer ')) return res.status(401).json({ error: 'Google Chat identity required' });
+  try {
+    const ticket = await chatTokenVerifier.verifyIdToken({
+      idToken: authorization.slice('Bearer '.length),
+      audience: process.env.CHAT_AUDIENCE || undefined,
+    });
+    const payload = ticket.getPayload();
+    if (!payload || payload.iss !== 'chat@system.gserviceaccount.com') throw new Error('Invalid Google Chat token issuer');
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Invalid Google Chat identity' });
+  }
+}
+
+app.use('/api', requireAdmin);
 
 // Helper: Build Google Chat Card v2 schema
 function buildGoogleChatCard(ticket: {
@@ -360,13 +463,9 @@ async function lookupRtUser(email: string, config: AppStore['config']) {
   if (!config.rtAuthToken || !config.rtBaseUrl.startsWith('http')) {
     // Return standard mock lookup based on RT specification
     const namePart = email.split('@')[0];
-    const generatedId = Math.abs(
-      email.split('').reduce((acc, char) => acc + char.charCodeAt(0), 100)
-    );
     return {
       success: true,
       user: {
-        id: generatedId,
         type: 'user',
         Name: namePart,
         EmailAddress: email,
@@ -374,60 +473,83 @@ async function lookupRtUser(email: string, config: AppStore['config']) {
         Organization: 'Example Organization',
       },
       source: 'offline_catalog',
+      message: undefined,
     };
   }
 
   try {
-    const query = JSON.stringify([{ field: 'EmailAddress', value: email }]);
+    const query = JSON.stringify([{ field: 'EmailAddress', operator: '=', value: email }]);
     const url = `${config.rtBaseUrl.replace(/\/$/, '')}/REST/2.0/users?query=${encodeURIComponent(query)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4000);
+    return await withRetry(async (_attempt, signal) => {
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: { Authorization: `token ${config.rtAuthToken}`, Accept: 'application/json' },
+        signal,
+      });
+      const data: any = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const error: any = new Error(data.message || `RT user search returned HTTP ${res.status}`);
+        error.status = res.status;
+        throw error;
+      }
+      if (!Array.isArray(data.items) || data.items.length === 0) {
+        return { success: false, user: null, source: 'rt_rest2', message: 'RT user not found' };
+      }
+      const firstUser = data.items[0];
+      if (!firstUser._url) return { success: true, user: firstUser, source: 'rt_rest2', message: undefined };
+      const detailRes = await fetch(firstUser._url, {
+        headers: { Authorization: `token ${config.rtAuthToken}`, Accept: 'application/json' },
+        signal,
+      });
+      const detailData: any = await detailRes.json().catch(() => ({}));
+      if (!detailRes.ok && (detailRes.status === 401 || detailRes.status === 403)) {
+        const error: any = new Error(detailData.message || `RT user detail returned HTTP ${detailRes.status}`);
+        error.status = detailRes.status;
+        throw error;
+      }
+      return { success: true, user: detailRes.ok ? detailData : firstUser, source: 'rt_rest2', message: undefined };
+    }, { timeoutMs: 8000, maxRetries: 2 });
+  } catch (err: any) {
+    console.warn('RT user lookup failed:', err.message);
+    return { success: false, user: null, source: 'rt_rest2', message: err.message, status: err.status };
+  }
+}
 
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Authorization: `token ${config.rtAuthToken}`,
-        Accept: 'application/json',
-      },
+async function getRtTicketState(ticketId: string | number, config: AppStore['config']) {
+  const url = `${config.rtBaseUrl.replace(/\/$/, '')}/REST/2.0/ticket/${encodeURIComponent(String(ticketId))}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Number(process.env.OUTBOUND_TIMEOUT_MS || 8000));
+  try {
+    const response = await fetch(url, {
+      headers: { Authorization: `token ${config.rtAuthToken}`, Accept: 'application/json' },
       signal: controller.signal,
     });
-    clearTimeout(timeout);
-
-    if (res.ok) {
-      const data: any = await res.json();
-      if (data.items && data.items.length > 0) {
-        const firstUser = data.items[0];
-        // Fetch full user details if available
-        const detailRes = await fetch(firstUser._url, {
-          headers: {
-            Authorization: `token ${config.rtAuthToken}`,
-            Accept: 'application/json',
-          },
-        });
-        if (detailRes.ok) {
-          const detailData = await detailRes.json();
-          return { success: true, user: detailData, source: 'rt_rest2' };
-        }
-        return { success: true, user: firstUser, source: 'rt_rest2' };
-      }
+    const data: any = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error: any = new Error(data.message || `RT ticket lookup returned HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
     }
-  } catch (err: any) {
-    console.warn('RT user lookup network fallback:', err.message);
+    return { data, etag: response.headers.get('etag') || undefined, url };
+  } finally {
+    clearTimeout(timeout);
   }
+}
 
-  // Graceful fallback: RT accounts match user email address as unique identifier
-  const namePart = email.split('@')[0];
-  return {
-    success: true,
-    user: {
-      id: Math.abs(email.split('').reduce((acc, c) => acc + c.charCodeAt(0), 100)),
-      type: 'user',
-      Name: namePart,
-      EmailAddress: email,
-      RealName: namePart.charAt(0).toUpperCase() + namePart.slice(1),
-    },
-    source: 'rt_email_identifier',
-  };
+function getLifecycleLink(ticket: any, status: string) {
+  return Array.isArray(ticket?._hyperlinks)
+    ? ticket._hyperlinks.find((link: any) => link.ref === 'lifecycle' && String(link.to) === status)
+    : undefined;
+}
+
+function getHyperlink(ticket: any, ref: string) {
+  return Array.isArray(ticket?._hyperlinks)
+    ? ticket._hyperlinks.find((link: any) => link.ref === ref)
+    : undefined;
+}
+
+function formatRtError(error: any) {
+  return { success: false, message: error.message, status: error.status, syncedWithRemote: false };
 }
 
 // RT REST 2.0 Ticket Status Update
@@ -441,31 +563,38 @@ async function updateRtTicketInRemote(ticketId: string | number, status: string,
   }
 
   try {
-    const url = `${config.rtBaseUrl.replace(/\/$/, '')}/REST/2.0/ticket/${ticketId}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
-    const res = await fetch(url, {
+    const current = await getRtTicketState(ticketId, config);
+    const lifecycle = getLifecycleLink(current.data, status);
+    if (!lifecycle) {
+      if (current.data?.Status === status) return { success: true, message: 'RT ticket already has requested status', syncedWithRemote: true };
+      const error: any = new Error(`RT does not expose permitted lifecycle transition to '${status}'`);
+      error.status = 409;
+      return formatRtError(error);
+    }
+    const response = await fetch(lifecycle._url || current.url, {
       method: 'PUT',
       headers: {
         Authorization: `token ${config.rtAuthToken}`,
         'Content-Type': 'application/json',
         Accept: 'application/json',
+        ...(current.etag ? { 'If-Match': current.etag } : {}),
       },
       body: JSON.stringify({ Status: status }),
-      signal: controller.signal,
+      signal: AbortSignal.timeout(Number(process.env.OUTBOUND_TIMEOUT_MS || 8000)),
     });
-    clearTimeout(timeout);
-
-    if (res.ok) {
-      const data = await res.json();
-      return { success: true, message: JSON.stringify(data), syncedWithRemote: true };
-    } else {
-      const errText = await res.text();
-      return { success: false, message: `RT returned HTTP ${res.status}: ${errText}`, syncedWithRemote: false };
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 412) {
+        const reconciled = await getRtTicketState(ticketId, config).catch(() => null);
+        if (reconciled?.data?.Status === status) return { success: true, message: 'RT status already applied after concurrent update', syncedWithRemote: true };
+      }
+      const error: any = new Error(data.message || `RT returned HTTP ${response.status}`);
+      error.status = response.status;
+      return formatRtError(error);
     }
+    return { success: true, message: JSON.stringify(data), syncedWithRemote: true };
   } catch (err: any) {
-    return { success: false, message: err.message, syncedWithRemote: false };
+    return formatRtError(err);
   }
 }
 
@@ -485,56 +614,58 @@ async function addRtCorrespondenceInRemote(
   }
 
   try {
-    const url = `${config.rtBaseUrl.replace(/\/$/, '')}/REST/2.0/ticket/${ticketId}/correspond`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
-    const res = await fetch(url, {
+    const current = await getRtTicketState(ticketId, config);
+    const correspond = getHyperlink(current.data, 'correspond');
+    if (!correspond?._url) {
+      const error: any = new Error('RT does not expose correspondence permission for this ticket');
+      error.status = 403;
+      return formatRtError(error);
+    }
+    const response = await fetch(correspond._url, {
       method: 'POST',
       headers: {
         Authorization: `token ${config.rtAuthToken}`,
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify({
-        Subject: `Google Chat Correspondence from ${actorEmail}`,
-        Content: content,
-        ContentType: 'text/plain',
-      }),
-      signal: controller.signal,
+      body: JSON.stringify({ Subject: `Google Chat Correspondence from ${actorEmail}`, Content: content, ContentType: 'text/plain' }),
+      signal: AbortSignal.timeout(Number(process.env.OUTBOUND_TIMEOUT_MS || 8000)),
     });
-    clearTimeout(timeout);
-
-    if (res.ok) {
-      const data = await res.json();
-      return { success: true, message: JSON.stringify(data), syncedWithRemote: true };
-    } else {
-      const errText = await res.text();
-      return { success: false, message: `RT returned HTTP ${res.status}: ${errText}`, syncedWithRemote: false };
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error: any = new Error(data.message || `RT returned HTTP ${response.status}`);
+      error.status = response.status;
+      return formatRtError(error);
     }
+    return { success: true, message: JSON.stringify(data), syncedWithRemote: true };
   } catch (err: any) {
-    return { success: false, message: err.message, syncedWithRemote: false };
+    return formatRtError(err);
   }
 }
 
 // Send Card to Google Chat Space Webhook if configured
 async function dispatchToGoogleChatSpace(cardV2: any, webhookUrl: string) {
-  if (!webhookUrl || !webhookUrl.startsWith('https://chat.googleapis.com/')) {
-    return { sent: false, message: 'Google Chat Space Webhook URL not configured (or offline test)' };
-  }
+  const apiSpace = process.env.GOOGLE_CHAT_SPACE_NAME;
+  if (!webhookUrl && !apiSpace) return { sent: false, message: 'Google Chat delivery is not configured' };
   try {
-    const res = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json; charset=UTF-8' },
-      body: JSON.stringify({
-        cardsV2: [cardV2],
-      }),
-    });
-    if (res.ok) {
-      return { sent: true, message: 'Successfully dispatched to Google Chat Space webhook' };
-    }
-    const txt = await res.text();
-    return { sent: false, message: `Google Chat returned HTTP ${res.status}: ${txt}` };
+    return await withRetry(async (_attempt, signal) => {
+      let targetUrl = webhookUrl;
+      let headers: Record<string, string> = { 'Content-Type': 'application/json; charset=UTF-8' };
+      if (!targetUrl && apiSpace) {
+        const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/chat.bot'] });
+        const client = await auth.getClient();
+        headers = { ...headers, ...(await client.getRequestHeaders()) } as Record<string, string>;
+        targetUrl = `https://chat.googleapis.com/v1/${apiSpace}/messages`;
+      }
+      if (!targetUrl?.startsWith('https://chat.googleapis.com/')) throw new Error('Invalid Google Chat delivery URL');
+      const res = await fetch(targetUrl, { method: 'POST', headers, body: JSON.stringify({ cardsV2: [cardV2] }), signal });
+      if (!res.ok) {
+        const error: any = new Error(`Google Chat returned HTTP ${res.status}`);
+        error.status = res.status;
+        throw error;
+      }
+      return { sent: true, message: apiSpace && !webhookUrl ? 'Successfully dispatched through Google Chat API' : 'Successfully dispatched to Google Chat Space webhook' };
+    }, { timeoutMs: Number(process.env.OUTBOUND_TIMEOUT_MS || 8000), maxRetries: Number(process.env.MAX_RETRIES || 2) });
   } catch (err: any) {
     return { sent: false, message: `Dispatch error: ${err.message}` };
   }
@@ -546,17 +677,37 @@ async function dispatchToGoogleChatSpace(cardV2: any, webhookUrl: string) {
 app.post('/api/webhooks/rt-ticket-created', async (req: Request, res: Response) => {
   const store = getStore();
   const payload = req.body;
+  const rawBody = (req as Request & { rawBody?: string }).rawBody || JSON.stringify(payload);
+  const signature = req.header('x-rt-signature');
+  const timestamp = req.header('x-rt-timestamp');
+  const signatureValid = verifyRtSignature({
+    rawBody,
+    timestamp,
+    signature,
+    secret: store.config.webhookSecret,
+    maxAgeSeconds: Number(process.env.SIGNATURE_MAX_AGE_SECONDS || 300),
+  });
 
-  if (!payload || !payload.ticket) {
-    return res.status(400).json({ error: 'Invalid payload: missing ticket object' });
+  if (!signatureValid && !(process.env.NODE_ENV !== 'production' && payload?.secretToken && payload.secretToken === store.config.webhookSecret)) {
+    return res.status(401).json({ error: 'Invalid or missing RT webhook signature' });
+  }
+  try {
+    validateTicketPayload(payload);
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
   }
 
+  const eventId = String(req.header('x-rt-event-id') || payload.eventId || cryptoHash(rawBody));
+  const existingReceipt = store.eventReceipts[eventId];
+  if (existingReceipt) return res.status(200).json({ ...(existingReceipt.response as object || {}), duplicate: true });
+  store.eventReceipts[eventId] = { status: 'processing', updatedAt: new Date().toISOString() };
+  saveStore(store);
+
   const ticketData = payload.ticket;
-  const ticketId = ticketData.id || `T-${Date.now()}`;
-  const requestorEmail =
-    ticketData.Requestor ||
-    (Array.isArray(ticketData.Requestor) ? ticketData.Requestor[0]?.EmailAddress : '') ||
-    'user@example.org';
+  const ticketId = ticketData.id;
+  const requestorEmail = (Array.isArray(ticketData.Requestor)
+    ? ticketData.Requestor[0]?.EmailAddress
+    : ticketData.Requestor) as string;
 
   // Step 1: Look up RT user ID by email as instructed
   const userLookup = await lookupRtUser(requestorEmail, store.config);
@@ -586,12 +737,14 @@ app.post('/api/webhooks/rt-ticket-created', async (req: Request, res: Response) 
     spaceStatus = spaceRes.sent ? 'sent' : 'failed';
     spaceMessage = spaceRes.message;
   } else if (store.config.enableSpaceAlerts) {
-    spaceStatus = 'sent';
-    spaceMessage = 'Dispatched to Chat Space queue (Interactive preview ready)';
+    spaceStatus = 'skipped';
+    spaceMessage = 'Staff-space delivery enabled but no Google Chat destination is configured';
   }
 
-  let dmStatus: 'sent' | 'skipped' | 'failed' = 'sent';
-  let dmMessage = `Direct message delivered to ${requestorEmail} (RT User ID #${resolvedRtUserId})`;
+  const dmStatus: 'sent' | 'skipped' | 'failed' = 'skipped';
+  const dmMessage = store.config.enableUserDm
+    ? 'Direct messaging is not implemented; space notification only'
+    : 'Direct messaging disabled by configuration';
 
   // Save to local tickets store
   const existingTicketIndex = store.tickets.findIndex((t) => String(t.id) === String(ticketId));
@@ -639,7 +792,7 @@ app.post('/api/webhooks/rt-ticket-created', async (req: Request, res: Response) 
     dmDispatchMessage: dmMessage,
     spaceDispatchStatus: spaceStatus,
     spaceDispatchMessage: spaceMessage,
-    rawPayload: payload,
+    rawPayload: redactPayload(payload),
     cardV2Preview: cardV2,
   };
 
@@ -647,8 +800,7 @@ app.post('/api/webhooks/rt-ticket-created', async (req: Request, res: Response) 
   if (store.webhookLogs.length > 50) store.webhookLogs = store.webhookLogs.slice(0, 50);
 
   saveStore(store);
-
-  return res.status(200).json({
+  const response = {
     success: true,
     message: 'Webhook processed, RT user resolved, and Google Chat cards dispatched',
     ticketId,
@@ -656,11 +808,14 @@ app.post('/api/webhooks/rt-ticket-created', async (req: Request, res: Response) 
     dmStatus,
     spaceStatus,
     cardV2,
-  });
+  };
+  store.eventReceipts[eventId] = { status: 'completed', response, updatedAt: new Date().toISOString() };
+  saveStore(store);
+  return res.status(200).json(response);
 });
 
 // 2. Interactive Google Chat Card Action Handler (Buttons & Responses)
-app.post('/api/chat/interactive', async (req: Request, res: Response) => {
+app.post('/api/chat/interactive', requireChatIdentity, async (req: Request, res: Response) => {
   const store = getStore();
   const body = req.body;
 
@@ -686,27 +841,26 @@ app.post('/api/chat/interactive', async (req: Request, res: Response) => {
   if (!ticketId) {
     return res.status(400).json({ error: 'Missing ticketId in interactive card action' });
   }
+  try { validateStatus(newStatus); } catch (error: any) { return res.status(400).json({ error: error.message }); }
+  const operationId = String(req.header('x-idempotency-key') || body.actionId || `${ticketId}:${actionFunction}:${newStatus || ''}:${actorEmail}`);
+  if (store.operationReceipts[operationId]) return res.status(200).json({ success: true, duplicate: true });
+  store.operationReceipts[operationId] = { status: 'processing', updatedAt: new Date().toISOString() };
+  saveStore(store);
 
   // Update in local store
   const ticket = store.tickets.find((t) => String(t.id) === String(ticketId));
   const oldStatus = ticket ? ticket.Status : 'open';
 
-  if (ticket && newStatus) {
-    ticket.Status = newStatus;
-    if (!ticket.History) ticket.History = [];
-    ticket.History.push({
-      id: ticket.History.length + 1,
-      type: 'StatusChange',
-      actor: actorEmail,
-      content: `Status updated to '${newStatus}' directly via Google Chat button`,
-      timestamp: new Date().toISOString(),
-    });
-  }
-
   // Sync to remote RT REST 2.0
   let rtSyncRes = { success: true, message: 'Updated in local store', syncedWithRemote: false };
   if (newStatus) {
     rtSyncRes = await updateRtTicketInRemote(ticketId, newStatus, store.config);
+  }
+
+  if (ticket && newStatus && rtSyncRes.success) {
+    ticket.Status = newStatus;
+    if (!ticket.History) ticket.History = [];
+    ticket.History.push({ id: ticket.History.length + 1, type: 'StatusChange', actor: actorEmail, content: `Status updated to '${newStatus}' directly via Google Chat button`, timestamp: new Date().toISOString() });
   }
 
   // Record interaction log
@@ -730,12 +884,12 @@ app.post('/api/chat/interactive', async (req: Request, res: Response) => {
   // Also update corresponding webhook card previews in log
   store.webhookLogs.forEach((w) => {
     if (String(w.ticketId) === String(ticketId)) {
-      w.status = newStatus;
+      if (rtSyncRes.success) w.status = newStatus;
       w.cardV2Preview = buildGoogleChatCard({
         id: ticketId,
         Subject: ticket ? ticket.Subject : w.subject,
         Queue: ticket ? ticket.Queue : w.queue,
-        Status: newStatus,
+        Status: rtSyncRes.success ? newStatus : oldStatus,
         Priority: ticket ? ticket.Priority : 'Medium',
         RequestorEmail: ticket ? ticket.RequestorEmail : w.requestorEmail,
         RequestorName: ticket ? ticket.RequestorName : w.resolvedRtUserName,
@@ -747,6 +901,7 @@ app.post('/api/chat/interactive', async (req: Request, res: Response) => {
     }
   });
 
+  store.operationReceipts[operationId] = { status: rtSyncRes.success ? 'completed' : 'failed', updatedAt: new Date().toISOString() };
   saveStore(store);
 
   // Return Google Chat Action Response to update the card in-place
@@ -754,22 +909,22 @@ app.post('/api/chat/interactive', async (req: Request, res: Response) => {
     id: ticketId,
     Subject: ticket ? ticket.Subject : `Ticket #${ticketId}`,
     Queue: ticket ? ticket.Queue : store.config.defaultQueue,
-    Status: newStatus,
+    Status: rtSyncRes.success ? newStatus : oldStatus,
     Priority: ticket ? ticket.Priority : 'Medium',
     RequestorEmail: ticket ? ticket.RequestorEmail : actorEmail,
     RequestorName: actorName,
     Created: ticket ? ticket.Created : new Date().toISOString(),
     Content: ticket ? ticket.Content : '',
-    rtUserId: ticket ? ticket.rtUserId : '482',
+    rtUserId: ticket?.rtUserId,
     rtBaseUrl: store.config.rtBaseUrl,
   });
 
-  return res.status(200).json({
+  return res.status(rtSyncRes.success ? 200 : 502).json({
     actionResponse: {
       type: 'UPDATE_MESSAGE',
     },
     cardsV2: [updatedCard],
-    message: `Ticket #${ticketId} status successfully changed to ${newStatus}`,
+    message: rtSyncRes.success ? `Ticket #${ticketId} status successfully changed to ${newStatus}` : rtSyncRes.message,
     sync: rtSyncRes,
   });
 });
@@ -780,25 +935,22 @@ app.post('/api/rt/tickets/:id/correspond', async (req: Request, res: Response) =
   const ticketId = req.params.id;
   const { content, actorEmail = 'jmartin@example.org', actorName = 'Example Agent' } = req.body;
 
-  if (!content) {
-    return res.status(400).json({ error: 'Content is required for correspondence' });
-  }
+  let validatedContent: string;
+  try { validatedContent = validateText(content, 'Content'); } catch (error: any) { return res.status(400).json({ error: error.message }); }
+  const operationId = String(req.header('x-idempotency-key') || cryptoHash(`${ticketId}:${actorEmail}:${validatedContent}`));
+  if (store.operationReceipts[operationId]) return res.status(200).json({ success: true, duplicate: true });
+  store.operationReceipts[operationId] = { status: 'processing', updatedAt: new Date().toISOString() };
+  saveStore(store);
 
   // Add to local ticket history
   const ticket = store.tickets.find((t) => String(t.id) === String(ticketId));
-  if (ticket) {
-    if (!ticket.History) ticket.History = [];
-    ticket.History.push({
-      id: ticket.History.length + 1,
-      type: 'Correspondence',
-      actor: actorEmail,
-      content,
-      timestamp: new Date().toISOString(),
-    });
-  }
-
   // Call RT REST 2.0 endpoint: POST /REST/2.0/ticket/:id/correspond
-  const rtRes = await addRtCorrespondenceInRemote(ticketId, content, actorEmail, store.config);
+  const rtRes = await addRtCorrespondenceInRemote(ticketId, validatedContent, actorEmail, store.config);
+
+  if (ticket && rtRes.success) {
+    if (!ticket.History) ticket.History = [];
+    ticket.History.push({ id: ticket.History.length + 1, type: 'Correspondence', actor: actorEmail, content: validatedContent, timestamp: new Date().toISOString() });
+  }
 
   // Record interaction
   const interactionLog = {
@@ -808,15 +960,16 @@ app.post('/api/rt/tickets/:id/correspond', async (req: Request, res: Response) =
     actorEmail,
     actorName,
     actionType: 'correspondence',
-    newValue: content.length > 80 ? content.slice(0, 77) + '...' : content,
+    newValue: validatedContent.length > 80 ? validatedContent.slice(0, 77) + '...' : validatedContent,
     rtSyncStatus: rtRes.success ? 'synced' : 'failed',
     rtResponseMessage: rtRes.message,
   };
   store.chatInteractionLogs.unshift(interactionLog);
+  store.operationReceipts[operationId] = { status: rtRes.success ? 'completed' : 'failed', updatedAt: new Date().toISOString() };
   saveStore(store);
 
-  return res.status(200).json({
-    success: true,
+  return res.status(rtRes.success ? 200 : 502).json({
+    success: rtRes.success,
     message: 'Correspondence successfully posted to Request Tracker',
     rtResponse: rtRes,
   });
@@ -828,26 +981,18 @@ app.put('/api/rt/tickets/:id/status', async (req: Request, res: Response) => {
   const ticketId = req.params.id;
   const { status, actorEmail = 'jmartin@example.org' } = req.body;
 
-  if (!status) {
-    return res.status(400).json({ error: 'Status is required' });
-  }
+  try { validateStatus(status); } catch (error: any) { return res.status(400).json({ error: error.message }); }
 
   const ticket = store.tickets.find((t) => String(t.id) === String(ticketId));
   const oldStatus = ticket ? ticket.Status : 'unknown';
 
-  if (ticket) {
+  const rtRes = await updateRtTicketInRemote(ticketId, status, store.config);
+
+  if (ticket && rtRes.success) {
     ticket.Status = status;
     if (!ticket.History) ticket.History = [];
-    ticket.History.push({
-      id: ticket.History.length + 1,
-      type: 'StatusChange',
-      actor: actorEmail,
-      content: `Status updated to '${status}' via RT Connect Dashboard`,
-      timestamp: new Date().toISOString(),
-    });
+    ticket.History.push({ id: ticket.History.length + 1, type: 'StatusChange', actor: actorEmail, content: `Status updated to '${status}' via RT Connect Dashboard`, timestamp: new Date().toISOString() });
   }
-
-  const rtRes = await updateRtTicketInRemote(ticketId, status, store.config);
 
   store.chatInteractionLogs.unshift({
     id: `act-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -863,7 +1008,7 @@ app.put('/api/rt/tickets/:id/status', async (req: Request, res: Response) => {
   });
 
   saveStore(store);
-  return res.status(200).json({ success: true, status, rtRes });
+  return res.status(rtRes.success ? 200 : 502).json({ success: rtRes.success, status: ticket?.Status || oldStatus, rtRes });
 });
 
 // 5. Query RT User by Email (User Lookup Tester)
@@ -871,7 +1016,7 @@ app.get('/api/rt/user-lookup', async (req: Request, res: Response) => {
   const store = getStore();
   const email = (req.query.email as string) || 'jmartin@example.org';
   const result = await lookupRtUser(email, store.config);
-  return res.status(200).json(result);
+  return res.status(result.success || result.message === 'RT user not found' ? 200 : 502).json(result);
 });
 
 // 6. Test RT REST 2.0 Connection Health Check
@@ -890,7 +1035,7 @@ app.post('/api/rt/test-connection', async (req: Request, res: Response) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
 
-    const testUrl = `${rtBaseUrl.replace(/\/$/, '')}/REST/2.0/`;
+    const testUrl = `${rtBaseUrl.replace(/\/$/, '')}/REST/2.0/queues/all`;
     const response = await fetch(testUrl, {
       method: 'GET',
       headers: {
@@ -910,7 +1055,7 @@ app.post('/api/rt/test-connection', async (req: Request, res: Response) => {
         message: 'Connected to Request Tracker REST 2.0 API successfully',
       });
     } else {
-      return res.status(200).json({
+      return res.status(502).json({
         success: false,
         status: response.status,
         latencyMs: latency,
@@ -918,7 +1063,7 @@ app.post('/api/rt/test-connection', async (req: Request, res: Response) => {
       });
     }
   } catch (err: any) {
-    return res.status(200).json({
+    return res.status(502).json({
       success: false,
       latencyMs: Date.now() - startTime,
       message: `Connection check failed: ${err.message}`,
@@ -929,14 +1074,17 @@ app.post('/api/rt/test-connection', async (req: Request, res: Response) => {
 // 7. Get and Update Configuration
 app.get('/api/rt/config', (_req: Request, res: Response) => {
   const store = getStore();
-  return res.status(200).json(store.config);
+  return res.status(200).json(getSafeConfig(store.config));
 });
 
 app.post('/api/rt/config', (req: Request, res: Response) => {
   const store = getStore();
-  store.config = { ...store.config, ...req.body };
+  const allowedKeys = ['rtBaseUrl', 'rtAuthToken', 'defaultQueue', 'googleChatSpaceWebhookUrl', 'webhookSecret', 'enableUserDm', 'enableSpaceAlerts'];
+  const updates = Object.fromEntries(Object.entries(req.body || {}).filter(([key, value]) => allowedKeys.includes(key) && value !== '[configured]'));
+  if (updates.rtBaseUrl && (typeof updates.rtBaseUrl !== 'string' || !/^https?:\/\//.test(updates.rtBaseUrl))) return res.status(400).json({ error: 'Invalid RT base URL' });
+  store.config = { ...store.config, ...updates };
   saveStore(store);
-  return res.status(200).json({ success: true, config: store.config });
+  return res.status(200).json({ success: true, config: getSafeConfig(store.config) });
 });
 
 // 8. Get Tickets and Activity
@@ -996,7 +1144,6 @@ app.post('/api/webhooks/simulate', async (req: Request, res: Response) => {
       Content: content,
       Url: `${store.config.rtBaseUrl}/Ticket/Display.html?id=${simId}`,
     },
-    secretToken: store.config.webhookSecret,
   };
 
   // Dispatch through internal handler
@@ -1042,10 +1189,10 @@ app.post('/api/webhooks/simulate', async (req: Request, res: Response) => {
 
   store.tickets.unshift(newTicket);
 
-  let spaceStatus: 'sent' | 'skipped' | 'failed' = 'sent';
-  let spaceMessage = store.config.googleChatSpaceWebhookUrl
-    ? 'Card posted to Google Chat Space'
-    : 'Card rendered in Chat Space stream';
+  let spaceStatus: 'sent' | 'skipped' | 'failed' = 'skipped';
+  let spaceMessage = store.config.enableSpaceAlerts
+    ? 'Staff-space delivery enabled but no Google Chat destination is configured'
+    : 'Staff-space delivery disabled by configuration';
 
   if (store.config.enableSpaceAlerts && store.config.googleChatSpaceWebhookUrl) {
     const spaceRes = await dispatchToGoogleChatSpace(cardV2, store.config.googleChatSpaceWebhookUrl);
@@ -1064,8 +1211,10 @@ app.post('/api/webhooks/simulate', async (req: Request, res: Response) => {
     requestorEmail: requestor,
     resolvedRtUserId,
     resolvedRtUserName,
-    dmDispatchStatus: 'sent',
-    dmDispatchMessage: `Direct card sent to ${requestor} (RT User ID #${resolvedRtUserId})`,
+    dmDispatchStatus: 'skipped',
+    dmDispatchMessage: store.config.enableUserDm
+      ? 'Direct messaging is not implemented; space notification only'
+      : 'Direct messaging disabled by configuration',
     spaceDispatchStatus: spaceStatus,
     spaceDispatchMessage: spaceMessage,
     rawPayload: simPayload,

@@ -75,7 +75,7 @@ my $requestor = $ticket->Requestors->UserMembersObj->First;
 
 my $payload = {
     event => 'ticket_created',
-    secretToken => '${formData.webhookSecret || '[REDACTED]'}',
+      secretToken => '${formData.webhookSecret || '(configured server-side)'}',
     ticket => {
         id => $ticket->Id,
         Subject => $ticket->Subject,
@@ -191,7 +191,7 @@ return 1;
                   type="text"
                   value={formData.webhookSecret}
                   onChange={(e) => setFormData({ ...formData, webhookSecret: e.target.value })}
-                  placeholder="[REDACTED]"
+                  placeholder="Set server-side RT_WEBHOOK_SECRET"
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-indigo-500"
                 />
               </div>

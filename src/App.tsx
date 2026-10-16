@@ -16,6 +16,15 @@ import {
 } from './types/rt';
 
 export default function App() {
+  const apiFetch = (input: RequestInfo | URL, init: RequestInit = {}) => fetch(input, {
+    ...init,
+    headers: {
+      ...init.headers,
+      ...(import.meta.env.VITE_RT_CONNECT_ADMIN_TOKEN
+        ? { 'X-RT-Connect-Admin-Token': import.meta.env.VITE_RT_CONNECT_ADMIN_TOKEN }
+        : {}),
+    },
+  });
   const [activeTab, setActiveTab] = useState<
     'activity' | 'chat-simulator' | 'tickets' | 'user-lookup' | 'settings'
   >('activity');
@@ -30,8 +39,8 @@ export default function App() {
     rtAuthToken: '',
     defaultQueue: 'IT Support',
     googleChatSpaceWebhookUrl: '',
-    webhookSecret: '[REDACTED]',
-    enableUserDm: true,
+    webhookSecret: '',
+    enableUserDm: false,
     enableSpaceAlerts: true,
   });
   const [isLoading, setIsLoading] = useState(true);
@@ -53,9 +62,9 @@ export default function App() {
   const fetchData = async () => {
     try {
       const [activityRes, ticketsRes, configRes] = await Promise.all([
-        fetch('/api/activity'),
-        fetch('/api/rt/tickets'),
-        fetch('/api/rt/config'),
+        apiFetch('/api/activity'),
+        apiFetch('/api/rt/tickets'),
+        apiFetch('/api/rt/config'),
       ]);
 
       if (activityRes.ok) {
@@ -114,7 +123,7 @@ export default function App() {
     const currentUserEmail = user?.email || 'jmartin@example.org';
     const currentUserName = user?.displayName || 'Example Agent';
 
-    const res = await fetch('/api/chat/interactive', {
+    const res = await apiFetch('/api/chat/interactive', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -140,7 +149,7 @@ export default function App() {
     content: string,
     actorEmail: string
   ) => {
-    const res = await fetch(`/api/rt/tickets/${ticketId}/correspond`, {
+    const res = await apiFetch(`/api/rt/tickets/${ticketId}/correspond`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -165,7 +174,7 @@ export default function App() {
     requestor: string;
     content: string;
   }) => {
-    const res = await fetch('/api/webhooks/simulate', {
+    const res = await apiFetch('/api/webhooks/simulate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(preset),
@@ -184,7 +193,7 @@ export default function App() {
 
   // User Lookup
   const handleUserLookup = async (email: string) => {
-    const res = await fetch(`/api/rt/user-lookup?email=${encodeURIComponent(email)}`);
+    const res = await apiFetch(`/api/rt/user-lookup?email=${encodeURIComponent(email)}`);
     if (!res.ok) {
       throw new Error('Lookup failed');
     }
@@ -193,7 +202,7 @@ export default function App() {
 
   // Save Configuration
   const handleSaveConfig = async (updated: Partial<RtConfig>) => {
-    const res = await fetch('/api/rt/config', {
+    const res = await apiFetch('/api/rt/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updated),
@@ -205,7 +214,7 @@ export default function App() {
 
   // Test Connection
   const handleTestConnection = async (baseUrl: string, token: string) => {
-    const res = await fetch('/api/rt/test-connection', {
+    const res = await apiFetch('/api/rt/test-connection', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ rtBaseUrl: baseUrl, rtAuthToken: token }),
@@ -215,7 +224,7 @@ export default function App() {
 
   // Clear Logs
   const handleClearLogs = async () => {
-    await fetch('/api/activity', { method: 'DELETE' });
+    await apiFetch('/api/activity', { method: 'DELETE' });
     await fetchData();
   };
 
