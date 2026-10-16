@@ -207,7 +207,7 @@ return 1;
                 onChange={(e) =>
                   setFormData({ ...formData, googleChatSpaceWebhookUrl: e.target.value })
                 }
-                placeholder="Google Chat webhook URL placeholder"
+                placeholder="Paste complete Google Chat incoming webhook URL"
                 className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-indigo-500"
               />
               <span className="text-[11px] text-slate-400 mt-1 block">
