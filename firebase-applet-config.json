@@ -4,7 +4,7 @@
   "apiKey": "REPLACE_WITH_FIREBASE_WEB_API_KEY",
   "authDomain": "example-firebase-project.firebaseapp.com",
   "storageBucket": "example-firebase-project.firebasestorage.app",
-  "messagingSenderId": "854712641594",
+  "messagingSenderId": "000000000000",
   "measurementId": "",
   "oAuthClientId": "000000000000-example.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
