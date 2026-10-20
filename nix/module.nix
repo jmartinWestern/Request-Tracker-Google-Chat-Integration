@@ -18,6 +18,15 @@ let
     cfg.secrets.adminTokenFile
   ];
   secretChecks = concatMapStringsSep " " escapeShellArg configuredSecretPaths;
+  secretCheckScript = pkgs.writeShellScript "request-tracker-google-chat-check-secrets" ''
+    set -eu
+    for secret in ${secretChecks}; do
+      test -r "$secret" || { echo "required secret file is missing or unreadable" >&2; exit 1; }
+      test "$(stat -c %U "$secret")" = "${cfg.user}" || { echo "secret file must be owned by ${cfg.user}" >&2; exit 1; }
+      mode=$(stat -c %a "$secret")
+      test $((8#$mode & 077)) -eq 0 || { echo "secret file must not be readable by group or other users" >&2; exit 1; }
+    done
+  '';
 in
 {
   options.services.requestTrackerGoogleChat = {
@@ -195,11 +204,7 @@ in
         GOOGLE_APPLICATION_CREDENTIALS = cfg.secrets.googleApplicationCredentialsFile;
       };
       serviceConfig = {
-        ExecStartPre = optional (cfg.environment == "production") ''
-          ${pkgs.bash}/bin/bash -ceu 'for secret in ${secretChecks}; do
-            test -r "$secret" || { echo "required secret file is missing or unreadable" >&2; exit 1; }
-          done'
-        '';
+        ExecStartPre = optional (cfg.environment == "production") secretCheckScript;
         ExecStart = "${cfg.package}/bin/request-tracker-google-chat-integration";
         User = cfg.user;
         Group = cfg.group;
