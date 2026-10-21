@@ -16,15 +16,29 @@ import {
 } from './types/rt';
 
 export default function App() {
-  const apiFetch = (input: RequestInfo | URL, init: RequestInit = {}) => fetch(input, {
-    ...init,
-    headers: {
-      ...init.headers,
-      ...(import.meta.env.VITE_RT_CONNECT_ADMIN_TOKEN
-        ? { 'X-RT-Connect-Admin-Token': import.meta.env.VITE_RT_CONNECT_ADMIN_TOKEN }
-        : {}),
-    },
-  });
+  const getAdminToken = () => {
+    const configuredToken = import.meta.env.VITE_RT_CONNECT_ADMIN_TOKEN;
+    if (configuredToken) return configuredToken;
+
+    const storageKey = 'rt-connect-admin-token';
+    const storedToken = window.localStorage.getItem(storageKey);
+    if (storedToken) return storedToken;
+
+    const enteredToken = window.prompt('Enter RT Connect admin token');
+    if (enteredToken) window.localStorage.setItem(storageKey, enteredToken);
+    return enteredToken || '';
+  };
+
+  const apiFetch = (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const adminToken = getAdminToken();
+    return fetch(input, {
+      ...init,
+      headers: {
+        ...init.headers,
+        ...(adminToken ? { 'X-RT-Connect-Admin-Token': adminToken } : {}),
+      },
+    });
+  };
   const [activeTab, setActiveTab] = useState<
     'activity' | 'chat-simulator' | 'tickets' | 'user-lookup' | 'settings'
   >('activity');
