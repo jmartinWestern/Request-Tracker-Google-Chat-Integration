@@ -81,7 +81,8 @@ export const SettingsAndDiagnostics: React.FC<SettingsAndDiagnosticsProps> = ({
   const customPrepareCode = `# Optional. Return true to run the commit code.
 return 1;`;
 
-  const customCommitCode = `use warnings;
+  const customCommitCode = `use strict;
+use warnings;
 use Digest::SHA qw(hmac_sha256_hex);
 use HTTP::Request;
 use JSON qw(encode_json);

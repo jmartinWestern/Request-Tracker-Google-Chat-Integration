@@ -244,9 +244,7 @@ The custom action must:
 Illustrative Perl action code:
 
 ```perl
-# Do not use "use strict" here. RT compiles custom scrip code as
-# "no strict 'vars'; eval \"sub { $code }\"", so strict would make $self
-# an undeclared global and the scrip would fail RT's compile check.
+use strict;
 use warnings;
 use Digest::SHA qw(hmac_sha256_hex);
 use HTTP::Request;
