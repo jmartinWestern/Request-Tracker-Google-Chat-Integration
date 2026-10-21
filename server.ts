@@ -263,6 +263,7 @@ function getStore(): AppStore {
             ...stored.config,
             rtBaseUrl: process.env.RT_BASE_URL || stored.config.rtBaseUrl || defaultStore.config.rtBaseUrl,
             rtAuthToken: process.env.RT_AUTH_TOKEN || stored.config.rtAuthToken || defaultStore.config.rtAuthToken,
+          googleChatSpaceWebhookUrl: process.env.GOOGLE_CHAT_SPACE_WEBHOOK_URL || stored.config.googleChatSpaceWebhookUrl || defaultStore.config.googleChatSpaceWebhookUrl,
           webhookSecret: process.env.RT_WEBHOOK_SECRET || stored.config.webhookSecret || defaultStore.config.webhookSecret,
           enableUserDm: envBoolean('RT_ENABLE_USER_DM', stored.config.enableUserDm ?? defaultStore.config.enableUserDm),
           enableSpaceAlerts: envBoolean('RT_ENABLE_SPACE_ALERTS', stored.config.enableSpaceAlerts ?? defaultStore.config.enableSpaceAlerts),
