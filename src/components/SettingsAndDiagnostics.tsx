@@ -60,44 +60,56 @@ export const SettingsAndDiagnostics: React.FC<SettingsAndDiagnosticsProps> = ({
 
   const appWebhookUrl = `${window.location.origin}/api/webhooks/rt-ticket-created`;
 
-  const perlScripCode = `# RT 6.0 Scrip Custom Action Cleanup Code
-# Condition: On Create
-# Action: User Defined
-# Template: Blank
+  const perlQuote = (value: string) => value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const scripWebhookSecret = perlQuote(formData.webhookSecret || '(paste RT webhook secret)');
+  const scripWebhookUrl = perlQuote(appWebhookUrl);
+  const scripRtBaseUrl = perlQuote(formData.rtBaseUrl);
 
-use strict;
+  const customConditionCode = `# Leave blank when using the built-in "On Create" condition.`;
+
+  const customPrepareCode = `# Optional. Return true to run the commit code.
+return 1;`;
+
+  const customCommitCode = `use strict;
 use warnings;
+use Digest::SHA qw(hmac_sha256_hex);
+use HTTP::Request;
 use JSON qw(encode_json);
 use LWP::UserAgent;
 
 my $ticket = $self->TicketObj;
 my $requestor = $ticket->Requestors->UserMembersObj->First;
+my $timestamp = time;
 
 my $payload = {
+    eventId => 'rt-transaction-' . $self->TransactionObj->Id,
     event => 'ticket_created',
-      secretToken => '${formData.webhookSecret || '(configured server-side)'}',
     ticket => {
-        id => $ticket->Id,
+        id => 0 + $ticket->Id,
         Subject => $ticket->Subject,
         Queue => $ticket->QueueObj->Name,
         Status => $ticket->Status,
         Priority => $ticket->Priority,
-        Requestor => $requestor ? $requestor->EmailAddress : 'unknown\@example.org',
+        Requestor => $requestor ? $requestor->EmailAddress : '',
         RequestorName => $requestor ? $requestor->RealName : '',
         Created => $ticket->Created,
-        Content => $self->TransactionObj->Content || $ticket->Transactions->First->Content,
-        Url => '${formData.rtBaseUrl}/Ticket/Display.html?id=' . $ticket->Id,
+        Content => $self->TransactionObj->Content || '',
+        Url => '${scripRtBaseUrl}/Ticket/Display.html?id=' . $ticket->Id,
     }
 };
 
-my $ua = LWP::UserAgent->new(timeout => 5);
-my $req = HTTP::Request->new(POST => '${appWebhookUrl}');
+my $body = encode_json($payload);
+my $signature = hmac_sha256_hex($timestamp . '.' . $body, '${scripWebhookSecret}');
+my $req = HTTP::Request->new(POST => '${scripWebhookUrl}');
 $req->header('Content-Type' => 'application/json');
-$req->content(encode_json($payload));
+$req->header('X-RT-Timestamp' => $timestamp);
+$req->header('X-RT-Signature' => 'sha256=' . $signature);
+$req->header('X-RT-Event-Id' => $payload->{eventId});
+$req->content($body);
 
-my $res = $ua->request($req);
+my $res = LWP::UserAgent->new(timeout => 10)->request($req);
 if (!$res->is_success) {
-    RT::Logger->error("Failed to notify Google Chat bridge: " . $res->status_line);
+    RT::Logger->error('RT Connect webhook failed: ' . $res->status_line);
 }
 return 1;
 `;
@@ -313,17 +325,35 @@ return 1;
               <li><strong>Condition:</strong> On Create</li>
               <li><strong>Action:</strong> User Defined</li>
               <li><strong>Template:</strong> Blank</li>
-              <li><strong>Stage:</strong> Normal</li>
+              <li><strong>Stage:</strong> TransactionCreate</li>
             </ul>
           </div>
 
-          <div>
-            <span className="text-[11px] text-slate-400 font-medium block mb-1">
-              Custom Action Cleanup Code:
-            </span>
-            <pre className="p-3 bg-slate-950 rounded-lg font-mono text-[10px] text-slate-300 border border-slate-800 overflow-x-auto max-h-64 leading-relaxed">
-              {perlScripCode}
-            </pre>
+          <div className="space-y-3">
+            <div>
+              <span className="text-[11px] text-slate-400 font-medium block mb-1">
+                Custom Condition (leave blank):
+              </span>
+              <pre className="p-3 bg-slate-950 rounded-lg font-mono text-[10px] text-slate-300 border border-slate-800 overflow-x-auto leading-relaxed">
+                {customConditionCode}
+              </pre>
+            </div>
+            <div>
+              <span className="text-[11px] text-slate-400 font-medium block mb-1">
+                Custom Action Preparation Code:
+              </span>
+              <pre className="p-3 bg-slate-950 rounded-lg font-mono text-[10px] text-slate-300 border border-slate-800 overflow-x-auto leading-relaxed">
+                {customPrepareCode}
+              </pre>
+            </div>
+            <div>
+              <span className="text-[11px] text-slate-400 font-medium block mb-1">
+                Custom Action Commit Code:
+              </span>
+              <pre className="p-3 bg-slate-950 rounded-lg font-mono text-[10px] text-slate-300 border border-slate-800 overflow-x-auto max-h-64 leading-relaxed">
+                {customCommitCode}
+              </pre>
+            </div>
           </div>
 
           <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 text-[11px] text-slate-400 space-y-1">
