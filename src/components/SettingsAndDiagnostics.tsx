@@ -222,6 +222,24 @@ return 1;
 
             <div>
               <label className="text-xs font-semibold text-slate-300 block mb-1">
+                Dashboard Admin Token:
+              </label>
+              <input
+                type="text"
+                value={formData.adminToken}
+                onChange={(e) => setFormData({ ...formData, adminToken: e.target.value })}
+                placeholder="RT_CONNECT_ADMIN_TOKEN"
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-indigo-500"
+              />
+              <span className="text-[11px] text-slate-400 mt-1 block">
+                Sent as <code className="text-indigo-400">X-RT-Connect-Admin-Token</code> so the
+                dashboard can call the admin and simulation endpoints. Leave blank to use the
+                server-configured value.
+              </span>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-slate-300 block mb-1">
                 RT Connect Webhook Endpoint (used by the RT Scrip):
               </label>
               <input

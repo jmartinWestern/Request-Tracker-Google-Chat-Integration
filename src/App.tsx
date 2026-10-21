@@ -16,7 +16,11 @@ import {
 } from './types/rt';
 
 export default function App() {
+  const [serverAdminToken, setServerAdminToken] = useState('');
+
   const getAdminToken = () => {
+    if (serverAdminToken) return serverAdminToken;
+
     const configuredToken = import.meta.env.VITE_RT_CONNECT_ADMIN_TOKEN;
     if (configuredToken) return configuredToken;
 
@@ -27,6 +31,11 @@ export default function App() {
     const enteredToken = window.prompt('Enter RT Connect admin token');
     if (enteredToken) window.localStorage.setItem(storageKey, enteredToken);
     return enteredToken || '';
+  };
+
+  const readErrorDetail = async (res: Response) => {
+    const detail: any = await res.json().catch(() => ({}));
+    return detail.message || detail.error || `HTTP ${res.status}`;
   };
 
   const apiFetch = (input: RequestInfo | URL, init: RequestInit = {}) => {
@@ -55,6 +64,7 @@ export default function App() {
     googleChatSpaceWebhookUrl: '',
     webhookSecret: '',
     webhookEndpoint: '',
+    adminToken: '',
     enableUserDm: false,
     enableSpaceAlerts: true,
   });
@@ -99,6 +109,7 @@ export default function App() {
       if (configRes.ok) {
         const configData = await configRes.json();
         setConfig(configData);
+        if (configData.adminToken) setServerAdminToken(configData.adminToken);
       }
     } catch (err) {
       console.error('Failed to fetch initial data:', err);
@@ -151,7 +162,7 @@ export default function App() {
     });
 
     if (!res.ok) {
-      throw new Error(`Failed to update ticket #${ticketId}`);
+      throw new Error(`Failed to update ticket #${ticketId}: ${await readErrorDetail(res)}`);
     }
 
     // Refresh tickets and activity
@@ -175,7 +186,7 @@ export default function App() {
     });
 
     if (!res.ok) {
-      throw new Error('Failed to post correspondence');
+      throw new Error(`Failed to post correspondence: ${await readErrorDetail(res)}`);
     }
 
     await fetchData();

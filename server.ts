@@ -73,6 +73,7 @@ interface AppStore {
     googleChatSpaceWebhookUrl: string;
     webhookSecret: string;
     webhookEndpoint: string;
+    adminToken: string;
     enableUserDm: boolean;
     enableSpaceAlerts: boolean;
   };
@@ -91,6 +92,7 @@ const defaultStore: AppStore = {
     googleChatSpaceWebhookUrl: process.env.GOOGLE_CHAT_SPACE_WEBHOOK_URL || '',
     webhookSecret: process.env.RT_WEBHOOK_SECRET || '',
     webhookEndpoint: process.env.RT_CONNECT_WEBHOOK_ENDPOINT || '',
+    adminToken: process.env.RT_CONNECT_ADMIN_TOKEN || '',
     enableUserDm: envBoolean('RT_ENABLE_USER_DM', false),
     enableSpaceAlerts: envBoolean('RT_ENABLE_SPACE_ALERTS', true),
   },
@@ -269,6 +271,7 @@ function getStore(): AppStore {
           googleChatSpaceWebhookUrl: process.env.GOOGLE_CHAT_SPACE_WEBHOOK_URL || stored.config.googleChatSpaceWebhookUrl || defaultStore.config.googleChatSpaceWebhookUrl,
           webhookSecret: process.env.RT_WEBHOOK_SECRET || stored.config.webhookSecret || defaultStore.config.webhookSecret,
           webhookEndpoint: stored.config.webhookEndpoint || process.env.RT_CONNECT_WEBHOOK_ENDPOINT || defaultStore.config.webhookEndpoint,
+          adminToken: process.env.RT_CONNECT_ADMIN_TOKEN || stored.config.adminToken || defaultStore.config.adminToken,
           enableUserDm: envBoolean('RT_ENABLE_USER_DM', stored.config.enableUserDm ?? defaultStore.config.enableUserDm),
           enableSpaceAlerts: envBoolean('RT_ENABLE_SPACE_ALERTS', stored.config.enableSpaceAlerts ?? defaultStore.config.enableSpaceAlerts),
         },
@@ -1143,7 +1146,7 @@ app.get('/api/rt/config', (_req: Request, res: Response) => {
 
 app.post('/api/rt/config', (req: Request, res: Response) => {
   const store = getStore();
-  const allowedKeys = ['rtBaseUrl', 'rtAuthToken', 'defaultQueue', 'googleChatSpaceWebhookUrl', 'webhookSecret', 'webhookEndpoint', 'enableUserDm', 'enableSpaceAlerts'];
+  const allowedKeys = ['rtBaseUrl', 'rtAuthToken', 'defaultQueue', 'googleChatSpaceWebhookUrl', 'webhookSecret', 'webhookEndpoint', 'adminToken', 'enableUserDm', 'enableSpaceAlerts'];
   const updates = Object.fromEntries(Object.entries(req.body || {}).filter(([key, value]) => allowedKeys.includes(key) && value !== '[configured]'));
   if (updates.rtBaseUrl && (typeof updates.rtBaseUrl !== 'string' || !/^https?:\/\//.test(updates.rtBaseUrl))) return res.status(400).json({ error: 'Invalid RT base URL' });
   store.config = { ...store.config, ...updates };

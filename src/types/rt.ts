@@ -97,6 +97,7 @@ export interface RtConfig {
   googleChatSpaceWebhookUrl: string;
   webhookSecret: string;
   webhookEndpoint: string;
+  adminToken: string;
   enableUserDm: boolean;
   enableSpaceAlerts: boolean;
 }
