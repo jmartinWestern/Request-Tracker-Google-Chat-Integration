@@ -16,6 +16,7 @@ import {
   verifyRtSignature,
   withRetry,
 } from './src/server/security';
+import { applyTicketEvent } from './src/server/ticketStore';
 
 dotenv.config();
 
@@ -764,30 +765,27 @@ app.post('/api/webhooks/rt-ticket-created', async (req: Request, res: Response) 
 
   // Save to local tickets store
   const existingTicketIndex = store.tickets.findIndex((t) => String(t.id) === String(ticketId));
-  const newTicketRecord = {
-    id: ticketId,
-    Subject: ticketData.Subject,
-    Status: ticketData.Status || 'new',
-    Queue: ticketData.Queue || store.config.defaultQueue,
-    Priority: ticketData.Priority || 'Medium',
-    RequestorEmail: requestorEmail,
-    RequestorName: resolvedRtUserName,
-    rtUserId: resolvedRtUserId,
-    Created: ticketData.Created || new Date().toISOString(),
-    Content: ticketData.Content,
-    History: [
-      {
-        id: 1,
-        type: 'Create',
-        actor: requestorEmail,
-        content: ticketData.Content || 'Ticket created in RT',
-        timestamp: new Date().toISOString(),
-      },
-    ],
-  };
+  const existingTicket = existingTicketIndex >= 0 ? store.tickets[existingTicketIndex] : undefined;
+  const eventType = payload.event || 'ticket_created';
+  const newTicketRecord = applyTicketEvent(
+    existingTicket,
+    {
+      id: ticketId,
+      Subject: ticketData.Subject,
+      Status: ticketData.Status,
+      Queue: ticketData.Queue,
+      Priority: ticketData.Priority,
+      RequestorEmail: requestorEmail,
+      RequestorName: resolvedRtUserName,
+      rtUserId: resolvedRtUserId,
+      Created: ticketData.Created,
+      Content: ticketData.Content,
+    },
+    { event: eventType, defaultQueue: store.config.defaultQueue }
+  );
 
   if (existingTicketIndex >= 0) {
-    store.tickets[existingTicketIndex] = { ...store.tickets[existingTicketIndex], ...newTicketRecord };
+    store.tickets[existingTicketIndex] = newTicketRecord;
   } else {
     store.tickets.unshift(newTicketRecord);
   }
