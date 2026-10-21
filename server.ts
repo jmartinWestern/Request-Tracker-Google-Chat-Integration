@@ -5,6 +5,8 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
+import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { GoogleAuth, OAuth2Client } from 'google-auth-library';
 import {
   redactPayload,
@@ -254,12 +256,13 @@ function getStore(): AppStore {
       const data = fs.readFileSync(STORE_PATH, 'utf-8');
       const stored = JSON.parse(data);
       return {
-        ...defaultStore,
-        ...stored,
-        config: {
-          ...defaultStore.config,
-          ...stored.config,
-          rtAuthToken: process.env.RT_AUTH_TOKEN || stored.config.rtAuthToken || defaultStore.config.rtAuthToken,
+          ...defaultStore,
+          ...stored,
+          config: {
+            ...defaultStore.config,
+            ...stored.config,
+            rtBaseUrl: process.env.RT_BASE_URL || stored.config.rtBaseUrl || defaultStore.config.rtBaseUrl,
+            rtAuthToken: process.env.RT_AUTH_TOKEN || stored.config.rtAuthToken || defaultStore.config.rtAuthToken,
           webhookSecret: process.env.RT_WEBHOOK_SECRET || stored.config.webhookSecret || defaultStore.config.webhookSecret,
           enableUserDm: envBoolean('RT_ENABLE_USER_DM', stored.config.enableUserDm ?? defaultStore.config.enableUserDm),
           enableSpaceAlerts: envBoolean('RT_ENABLE_SPACE_ALERTS', stored.config.enableSpaceAlerts ?? defaultStore.config.enableSpaceAlerts),
@@ -285,21 +288,30 @@ function saveStore(store: AppStore) {
 }
 
 function getSafeConfig(config: AppStore['config']) {
-  return {
-    ...config,
-    rtAuthToken: config.rtAuthToken ? '[configured]' : '',
-    webhookSecret: config.webhookSecret ? '[configured]' : '',
-    googleChatSpaceWebhookUrl: config.googleChatSpaceWebhookUrl ? '[configured]' : '',
-  };
+  return { ...config };
+}
+
+function allowUnauthenticatedDevelopment() {
+  return process.env.NODE_ENV === 'development' && process.env.RT_ALLOW_UNAUTHENTICATED_DEV === 'true';
 }
 
 function requireAdmin(req: Request, res: Response, next: () => void) {
   if (req.path === '/webhooks/rt-ticket-created' || req.path === '/chat/interactive') return next();
-  if (process.env.NODE_ENV !== 'production') return next();
+  if (allowUnauthenticatedDevelopment()) return next();
   const expected = process.env.RT_CONNECT_ADMIN_TOKEN;
-  if (!expected) return res.status(503).json({ error: 'Admin authentication is not configured' });
+  const isTestConnection = req.path === '/rt/test-connection';
+  if (isTestConnection) {
+    console.info(`[rt-test-connection] inbound adminTokenConfigured=${Boolean(expected)} adminTokenProvided=${Boolean(req.header('x-rt-connect-admin-token'))}`);
+  }
+  if (!expected) {
+    if (isTestConnection) console.warn('[rt-test-connection] rejected: admin authentication is not configured');
+    return res.status(503).json({ error: 'Admin authentication is not configured' });
+  }
   const provided = req.header('x-rt-connect-admin-token');
-  if (!provided || provided !== expected) return res.status(401).json({ error: 'Admin authentication required' });
+  if (!provided || provided !== expected) {
+    if (isTestConnection) console.warn('[rt-test-connection] rejected: admin authentication required');
+    return res.status(401).json({ error: 'Admin authentication required' });
+  }
   next();
 }
 
@@ -307,7 +319,7 @@ const chatTokenVerifier = new OAuth2Client();
 async function requireChatIdentity(req: Request, res: Response, next: () => void) {
   const adminToken = req.header('x-rt-connect-admin-token');
   if (process.env.NODE_ENV === 'production' && process.env.RT_CONNECT_ADMIN_TOKEN && adminToken === process.env.RT_CONNECT_ADMIN_TOKEN) return next();
-  if (process.env.NODE_ENV !== 'production' && !req.header('authorization')) return next();
+  if (allowUnauthenticatedDevelopment() && !req.header('authorization')) return next();
   if (process.env.NODE_ENV === 'production' && !process.env.CHAT_AUDIENCE) {
     return res.status(503).json({ error: 'CHAT_AUDIENCE is not configured' });
   }
@@ -688,7 +700,7 @@ app.post('/api/webhooks/rt-ticket-created', async (req: Request, res: Response) 
     maxAgeSeconds: Number(process.env.SIGNATURE_MAX_AGE_SECONDS || 300),
   });
 
-  if (!signatureValid && !(process.env.NODE_ENV !== 'production' && payload?.secretToken && payload.secretToken === store.config.webhookSecret)) {
+  if (!signatureValid && !(allowUnauthenticatedDevelopment() && payload?.secretToken && payload.secretToken === store.config.webhookSecret)) {
     return res.status(401).json({ error: 'Invalid or missing RT webhook signature' });
   }
   try {
@@ -1022,32 +1034,64 @@ app.get('/api/rt/user-lookup', async (req: Request, res: Response) => {
 // 6. Test RT REST 2.0 Connection Health Check
 app.post('/api/rt/test-connection', async (req: Request, res: Response) => {
   const { rtBaseUrl, rtAuthToken } = req.body;
+  const store = getStore();
+  const configuredToken = store.config.rtAuthToken;
+  const authToken = rtAuthToken === '[configured]' ? configuredToken : rtAuthToken;
 
-  if (!rtBaseUrl || !rtBaseUrl.startsWith('http')) {
+  if (typeof rtBaseUrl !== 'string' || !rtBaseUrl.startsWith('http')) {
     return res.status(400).json({
       success: false,
       message: 'Invalid RT Base URL. Must start with http:// or https://',
     });
   }
 
+  let configuredUrl: URL;
+  let requestedUrl: URL;
+  try {
+    configuredUrl = new URL(store.config.rtBaseUrl);
+    requestedUrl = new URL(rtBaseUrl);
+  } catch {
+    return res.status(400).json({ success: false, message: 'Invalid RT Base URL' });
+  }
+
+  const normalizeBaseUrl = (url: URL) => `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
+  if (
+    !['http:', 'https:'].includes(requestedUrl.protocol) ||
+    requestedUrl.username ||
+    requestedUrl.password ||
+    requestedUrl.search ||
+    requestedUrl.hash ||
+    normalizeBaseUrl(requestedUrl) !== normalizeBaseUrl(configuredUrl)
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: 'Save RT Base URL before testing connection',
+    });
+  }
+
   const startTime = Date.now();
+  const testUrl = `${normalizeBaseUrl(requestedUrl)}/REST/2.0/queues`;
+  console.info(`[rt-test-connection] request host=${requestedUrl.host} tokenConfigured=${Boolean(authToken)}`);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    timeout = setTimeout(() => controller.abort(), 5000);
 
-    const testUrl = `${rtBaseUrl.replace(/\/$/, '')}/REST/2.0/queues/all`;
     const response = await fetch(testUrl, {
       method: 'GET',
+      redirect: 'error',
       headers: {
-        Authorization: `token ${rtAuthToken || ''}`,
+        Authorization: `token ${authToken || ''}`,
         Accept: 'application/json',
       },
       signal: controller.signal,
     });
-    clearTimeout(timeout);
 
     const latency = Date.now() - startTime;
+
     if (response.ok) {
+      console.info(`[rt-test-connection] success status=${response.status} latencyMs=${latency}`);
       return res.status(200).json({
         success: true,
         status: response.status,
@@ -1055,6 +1099,7 @@ app.post('/api/rt/test-connection', async (req: Request, res: Response) => {
         message: 'Connected to Request Tracker REST 2.0 API successfully',
       });
     } else {
+      console.warn(`[rt-test-connection] failure status=${response.status} latencyMs=${latency}`);
       return res.status(502).json({
         success: false,
         status: response.status,
@@ -1063,11 +1108,15 @@ app.post('/api/rt/test-connection', async (req: Request, res: Response) => {
       });
     }
   } catch (err: any) {
+    const reason = err.name === 'AbortError' ? 'request timed out after 5000ms' : err.message;
+    console.error(`[rt-test-connection] error url=${testUrl} latencyMs=${Date.now() - startTime} reason=${JSON.stringify(reason)}`);
     return res.status(502).json({
       success: false,
       latencyMs: Date.now() - startTime,
-      message: `Connection check failed: ${err.message}`,
+      message: `Connection check failed: ${reason}`,
     });
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 });
 
@@ -1241,7 +1290,11 @@ async function startServer() {
     });
   } else {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      root: __dirname,
+      cacheDir: path.join(process.env.TMPDIR || '/tmp', 'request-tracker-vite'),
+      configFile: false,
+      plugins: [react(), tailwindcss()],
+      server: { middlewareMode: true, allowedHosts: ['w12-1846'] },
       appType: 'spa',
     });
     app.use(vite.middlewares);
