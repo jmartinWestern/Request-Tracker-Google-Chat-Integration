@@ -50,6 +50,18 @@ in
       description = "Base URL of the Request Tracker REST2 instance.";
     };
 
+    webhookEndpoint = mkOption {
+      type = types.str;
+      default = "";
+      description = ''
+        Public URL that the Request Tracker Scrip posts ticket events to, for example
+        https://rt-chatbot.example.org/api/webhooks/rt-ticket-created. The Scrip runs
+        inside the RT container, so this must be reachable from that container. It is
+        used as the default for the dashboard's generated Scrip and can be overridden
+        in the dashboard settings.
+      '';
+    };
+
     googleChatSpaceName = mkOption {
       type = types.str;
       default = "";
@@ -187,6 +199,7 @@ in
         NODE_ENV = cfg.environment;
         PORT = toString cfg.port;
         RT_BASE_URL = cfg.rtBaseUrl;
+        RT_CONNECT_WEBHOOK_ENDPOINT = cfg.webhookEndpoint;
         GOOGLE_CHAT_SPACE_NAME = cfg.googleChatSpaceName;
         CHAT_AUDIENCE = cfg.chatAudience;
         RT_CONNECT_DATA_DIR = cfg.stateDirectory;

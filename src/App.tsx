@@ -54,6 +54,7 @@ export default function App() {
     defaultQueue: 'IT Support',
     googleChatSpaceWebhookUrl: '',
     webhookSecret: '',
+    webhookEndpoint: '',
     enableUserDm: false,
     enableSpaceAlerts: true,
   });

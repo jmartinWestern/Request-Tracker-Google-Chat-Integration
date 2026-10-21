@@ -73,7 +73,7 @@ export const SettingsAndDiagnostics: React.FC<SettingsAndDiagnosticsProps> = ({
       .replace(/\r/g, '\\r')
       .replace(/\n/g, '\\n');
   const scripWebhookSecret = perlQuote(formData.webhookSecret || '(paste RT webhook secret)');
-  const scripWebhookUrl = perlQuote(appWebhookUrl);
+  const scripWebhookUrl = perlQuote(formData.webhookEndpoint || appWebhookUrl);
   const scripRtBaseUrl = perlQuote(formData.rtBaseUrl);
 
   const customConditionCode = `# Leave blank when using the built-in "On Create" condition.`;
@@ -217,6 +217,24 @@ return 1;
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-indigo-500"
                 />
               </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-slate-300 block mb-1">
+                RT Connect Webhook Endpoint (used by the RT Scrip):
+              </label>
+              <input
+                type="text"
+                value={formData.webhookEndpoint}
+                onChange={(e) => setFormData({ ...formData, webhookEndpoint: e.target.value })}
+                placeholder="https://rt-chatbot.wc-12.com/api/webhooks/rt-ticket-created"
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-indigo-500"
+              />
+              <span className="text-[11px] text-slate-400 mt-1 block">
+                The URL the Request Tracker Scrip posts to. The Scrip runs inside the RT
+                container, so this must be an address that container can reach. Leave blank to
+                use this page&apos;s origin.
+              </span>
             </div>
 
             <div>
@@ -390,8 +408,14 @@ return 1;
           </div>
 
           <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 text-[11px] text-slate-400 space-y-1">
-            <span className="font-semibold text-slate-200 block">Webhook Destination:</span>
-            <code className="text-indigo-400 break-all">{appWebhookUrl}</code>
+            <span className="font-semibold text-slate-200 block">Scrip Webhook Destination:</span>
+            <code className="text-indigo-400 break-all">{formData.webhookEndpoint || appWebhookUrl}</code>
+            {!formData.webhookEndpoint && (
+              <span className="block text-slate-500">
+                Using this page&apos;s origin. Set &quot;RT Connect Webhook Endpoint&quot; if the RT
+                container cannot reach it.
+              </span>
+            )}
           </div>
         </div>
       </div>
