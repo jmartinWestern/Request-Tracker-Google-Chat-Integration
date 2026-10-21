@@ -102,7 +102,7 @@ Firebase authentication is optional for displaying the dashboard, but production
 
 The browser configuration is not a place for RT tokens, webhook URLs, service-account JSON, or sops secret contents.
 
-The current Firebase sign-in state is a dashboard UI feature; it is not the server-side authorization mechanism for `/api` routes. In production, the compiled dashboard must send `VITE_RT_CONNECT_ADMIN_TOKEN`, or a private reverse proxy must enforce equivalent authentication before forwarding dashboard requests.
+The current Firebase sign-in state is a dashboard UI feature; it is not the server-side authorization mechanism for `/api` routes. In production, put the dashboard behind a private reverse proxy that enforces authentication and injects `X-RT-Connect-Admin-Token` before forwarding dashboard requests.
 
 ## Request Tracker REST2
 
@@ -219,7 +219,21 @@ Example event:
 
 ### RT Scrip action
 
-Create an RT Scrip that runs on ticket creation or the transaction events required by the integration. The custom action must:
+Create an RT Scrip that runs on ticket creation or the transaction events required by the integration. In the RT web UI, set:
+
+- **Description**: a short name, for example `Notify Google Chat on Ticket Create`.
+- **Condition**: `On Create`, or `On Correspond` for requestor responses.
+- **Action**: `User Defined`.
+- **Template**: `Blank`. The field is mandatory, and `Blank` is the correct value for a non-notification scrip.
+- **Stage**: `Normal`.
+
+Then fill the three user-defined boxes:
+
+- **Custom condition**: leave empty unless a custom condition is needed.
+- **Custom action preparation code**: `return 1;`
+- **Custom action commit code**: the code below.
+
+The custom action must:
 
 1. Build the JSON payload.
 2. Serialize it once.
@@ -230,7 +244,9 @@ Create an RT Scrip that runs on ticket creation or the transaction events requir
 Illustrative Perl action code:
 
 ```perl
-use strict;
+# Do not use "use strict" here. RT compiles custom scrip code as
+# "no strict 'vars'; eval \"sub { $code }\"", so strict would make $self
+# an undeclared global and the scrip would fail RT's compile check.
 use warnings;
 use Digest::SHA qw(hmac_sha256_hex);
 use HTTP::Request;
@@ -310,7 +326,6 @@ The first request processes the ticket. Repeating it with the same event ID retu
 | `RT_ENABLE_USER_DM` | No | Controls future direct requestor DMs; default `false`. Current builds report DMs as unavailable and do not send them. |
 | `RT_ENABLE_SPACE_ALERTS` | No | Sends ticket cards to the configured technical staff space; default `true`. |
 | `RT_CONNECT_ADMIN_TOKEN` or file | Production: yes | Protects dashboard/API routes. |
-| `VITE_RT_CONNECT_ADMIN_TOKEN` | Browser build | Header value used by the compiled dashboard. This is exposed to browsers; prefer a reverse-proxy auth boundary instead of treating it as a secret. |
 | `CHAT_AUDIENCE` | Production: yes | Expected Google Chat bearer-token audience for interactive callbacks. |
 | `MAX_BODY_BYTES` | No | JSON request limit; default `131072`. |
 | `SIGNATURE_MAX_AGE_SECONDS` | No | Webhook freshness window; default `300`. |
@@ -486,4 +501,4 @@ Run `journalctl -u request-tracker-google-chat`. Missing or unreadable productio
 
 ### Dashboard API returns `401`
 
-Production API routes require `RT_CONNECT_ADMIN_TOKEN`. The compiled browser dashboard sends `VITE_RT_CONNECT_ADMIN_TOKEN`; it must be set at build time. Do not expose the admin token through a public build without an additional reverse-proxy authentication boundary.
+Production API routes require `RT_CONNECT_ADMIN_TOKEN`. The dashboard must be served behind a reverse proxy that authenticates users and injects the matching `X-RT-Connect-Admin-Token` header. Do not embed this token in the browser bundle.

@@ -31,7 +31,13 @@ export const SettingsAndDiagnostics: React.FC<SettingsAndDiagnosticsProps> = ({
   const [isTesting, setIsTesting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [savedBanner, setSavedBanner] = useState(false);
-  const [copiedScrip, setCopiedScrip] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const copyField = (field: string, text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(null), 2000);
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,7 +66,12 @@ export const SettingsAndDiagnostics: React.FC<SettingsAndDiagnosticsProps> = ({
 
   const appWebhookUrl = `${window.location.origin}/api/webhooks/rt-ticket-created`;
 
-  const perlQuote = (value: string) => value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const perlQuote = (value: string) =>
+    value
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, "\\'")
+      .replace(/\r/g, '\\r')
+      .replace(/\n/g, '\\n');
   const scripWebhookSecret = perlQuote(formData.webhookSecret || '(paste RT webhook secret)');
   const scripWebhookUrl = perlQuote(appWebhookUrl);
   const scripRtBaseUrl = perlQuote(formData.rtBaseUrl);
@@ -70,8 +81,7 @@ export const SettingsAndDiagnostics: React.FC<SettingsAndDiagnosticsProps> = ({
   const customPrepareCode = `# Optional. Return true to run the commit code.
 return 1;`;
 
-  const customCommitCode = `use strict;
-use warnings;
+  const customCommitCode = `use warnings;
 use Digest::SHA qw(hmac_sha256_hex);
 use HTTP::Request;
 use JSON qw(encode_json);
@@ -92,7 +102,7 @@ my $payload = {
         Priority => $ticket->Priority,
         Requestor => $requestor ? $requestor->EmailAddress : '',
         RequestorName => $requestor ? $requestor->RealName : '',
-        Created => $ticket->Created,
+        Created => "$ticket->Created",
         Content => $self->TransactionObj->Content || '',
         Url => '${scripRtBaseUrl}/Ticket/Display.html?id=' . $ticket->Id,
     }
@@ -304,15 +314,11 @@ return 1;
               <span>RT Scrip Setup Guide</span>
             </h3>
             <button
-              onClick={() => {
-                navigator.clipboard.writeText(perlScripCode);
-                setCopiedScrip(true);
-                setTimeout(() => setCopiedScrip(false), 2000);
-              }}
+              onClick={() => copyField('commit', customCommitCode)}
               className="flex items-center gap-1 px-2.5 py-1 text-xs text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-md transition-colors"
             >
               <Copy className="w-3 h-3" />
-              <span>{copiedScrip ? 'Copied' : 'Copy Scrip'}</span>
+              <span>{copiedField === 'commit' ? 'Copied' : 'Copy Commit Code'}</span>
             </button>
           </div>
 
@@ -325,31 +331,58 @@ return 1;
               <li><strong>Condition:</strong> On Create</li>
               <li><strong>Action:</strong> User Defined</li>
               <li><strong>Template:</strong> Blank</li>
-              <li><strong>Stage:</strong> TransactionCreate</li>
+              <li><strong>Stage:</strong> Normal</li>
             </ul>
           </div>
 
           <div className="space-y-3">
             <div>
-              <span className="text-[11px] text-slate-400 font-medium block mb-1">
-                Custom Condition (leave blank):
-              </span>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px] text-slate-400 font-medium">
+                  Custom Condition (leave blank):
+                </span>
+                <button
+                  onClick={() => copyField('condition', customConditionCode)}
+                  className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded transition-colors"
+                >
+                  <Copy className="w-2.5 h-2.5" />
+                  <span>{copiedField === 'condition' ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
               <pre className="p-3 bg-slate-950 rounded-lg font-mono text-[10px] text-slate-300 border border-slate-800 overflow-x-auto leading-relaxed">
                 {customConditionCode}
               </pre>
             </div>
             <div>
-              <span className="text-[11px] text-slate-400 font-medium block mb-1">
-                Custom Action Preparation Code:
-              </span>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px] text-slate-400 font-medium">
+                  Custom Action Preparation Code:
+                </span>
+                <button
+                  onClick={() => copyField('prepare', customPrepareCode)}
+                  className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded transition-colors"
+                >
+                  <Copy className="w-2.5 h-2.5" />
+                  <span>{copiedField === 'prepare' ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
               <pre className="p-3 bg-slate-950 rounded-lg font-mono text-[10px] text-slate-300 border border-slate-800 overflow-x-auto leading-relaxed">
                 {customPrepareCode}
               </pre>
             </div>
             <div>
-              <span className="text-[11px] text-slate-400 font-medium block mb-1">
-                Custom Action Commit Code:
-              </span>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px] text-slate-400 font-medium">
+                  Custom Action Commit Code:
+                </span>
+                <button
+                  onClick={() => copyField('commit', customCommitCode)}
+                  className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded transition-colors"
+                >
+                  <Copy className="w-2.5 h-2.5" />
+                  <span>{copiedField === 'commit' ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
               <pre className="p-3 bg-slate-950 rounded-lg font-mono text-[10px] text-slate-300 border border-slate-800 overflow-x-auto max-h-64 leading-relaxed">
                 {customCommitCode}
               </pre>
