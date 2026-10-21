@@ -268,7 +268,7 @@ my $payload = {
         Priority => $ticket->Priority,
         Requestor => $requestor ? $requestor->EmailAddress : '',
         RequestorName => $requestor ? $requestor->RealName : '',
-        Created => "$ticket->Created",
+        Created => $ticket->Created,
         Content => $self->TransactionObj->Content || '',
         Url => 'https://rt.example.org/Ticket/Display.html?id=' . $ticket->Id,
     },

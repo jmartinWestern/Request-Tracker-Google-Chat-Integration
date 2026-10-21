@@ -357,6 +357,7 @@ function buildGoogleChatCard(ticket: {
   Created?: string;
   Content?: string;
   rtUserId?: string | number;
+  rtUserIdNote?: string;
   rtBaseUrl?: string;
 }) {
   const baseUrl = ticket.rtBaseUrl || 'https://rt.example.org';
@@ -387,7 +388,9 @@ function buildGoogleChatCard(ticket: {
               decoratedText: {
                 topLabel: 'Requestor (Unique RT Identifier)',
                 text: `${ticket.RequestorEmail} ${ticket.RequestorName ? `(${ticket.RequestorName})` : ''}`,
-                bottomLabel: ticket.rtUserId ? `RT User ID: #${ticket.rtUserId}` : 'Resolving RT User ID...',
+                bottomLabel: ticket.rtUserId
+                  ? `RT User ID: #${ticket.rtUserId}`
+                  : ticket.rtUserIdNote || 'Resolving RT User ID...',
               },
             },
             {
@@ -743,6 +746,11 @@ app.post('/api/webhooks/rt-ticket-created', async (req: Request, res: Response) 
     Created: ticketData.Created || new Date().toISOString(),
     Content: ticketData.Content || '(No content provided)',
     rtUserId: resolvedRtUserId,
+    rtUserIdNote: resolvedRtUserId
+      ? undefined
+      : store.config.rtAuthToken
+        ? `RT user lookup failed${userLookup.message ? `: ${userLookup.message}` : ''}`
+        : 'RT user ID unavailable: no RT auth token configured',
     rtBaseUrl: store.config.rtBaseUrl,
   });
 
