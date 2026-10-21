@@ -320,7 +320,11 @@ function requireAdmin(req: Request, res: Response, next: () => void) {
   next();
 }
 
-const chatTokenVerifier = new OAuth2Client();
+// Google Chat identity tokens are issued by chat@system.gserviceaccount.com,
+// which is not in google-auth-library's default issuer allowlist. Without this
+// the library rejects every Chat token and card actions fail with HTTP 401.
+const CHAT_TOKEN_ISSUER = 'chat@system.gserviceaccount.com';
+const chatTokenVerifier = new OAuth2Client({ issuers: [CHAT_TOKEN_ISSUER] });
 async function requireChatIdentity(req: Request, res: Response, next: () => void) {
   const adminToken = req.header('x-rt-connect-admin-token');
   if (process.env.NODE_ENV === 'production' && process.env.RT_CONNECT_ADMIN_TOKEN && adminToken === process.env.RT_CONNECT_ADMIN_TOKEN) return next();
@@ -336,9 +340,10 @@ async function requireChatIdentity(req: Request, res: Response, next: () => void
       audience: process.env.CHAT_AUDIENCE || undefined,
     });
     const payload = ticket.getPayload();
-    if (!payload || payload.iss !== 'chat@system.gserviceaccount.com') throw new Error('Invalid Google Chat token issuer');
+    if (!payload || payload.iss !== CHAT_TOKEN_ISSUER) throw new Error('Invalid Google Chat token issuer');
     next();
-  } catch {
+  } catch (err: any) {
+    console.warn('[chat-identity] rejected:', err?.message || err);
     return res.status(401).json({ error: 'Invalid Google Chat identity' });
   }
 }
