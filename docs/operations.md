@@ -5,10 +5,16 @@ For initial setup, Google Cloud configuration, RT permissions, webhook Scrip cod
 ## Security
 
 - Set `RT_WEBHOOK_SECRET` and require signed RT requests.
-- Set `RT_CONNECT_ADMIN_TOKEN` and `CHAT_AUDIENCE` in production. The browser build must receive matching `VITE_RT_CONNECT_ADMIN_TOKEN`, or dashboard routes must be protected by a reverse proxy.
+- Set `RT_CONNECT_ADMIN_TOKEN` and `CHAT_AUDIENCE` in production. Keep dashboard routes behind an authenticated reverse proxy that injects `X-RT-Connect-Admin-Token`; never embed the admin token in the browser bundle.
 - Serve the application behind HTTPS.
 - Do not expose `data/store.json` as static content.
 - Configuration responses redact RT tokens and webhook secrets. Logs redact credential-shaped fields and do not store raw secrets.
+
+For local Compose testing only, explicitly opt into unauthenticated development mode while keeping the port bound to localhost:
+
+```bash
+NODE_ENV=development RT_ALLOW_UNAUTHENTICATED_DEV=true docker compose up --build
+```
 
 ## Reliability
 

@@ -35,7 +35,7 @@
           runHook preInstall
           runtimeRoot="$out/lib/request-tracker-google-chat-integration"
           mkdir -p "$runtimeRoot" "$out/bin"
-          cp -r dist server.ts src package.json "$runtimeRoot/"
+          cp -r dist firebase-applet-config.json index.html vite.config.ts server.ts src package.json "$runtimeRoot/"
           cp -r node_modules "$runtimeRoot/"
           makeWrapper ${pkgs.nodejs}/bin/node "$out/bin/request-tracker-google-chat-integration" \
             --add-flags "$runtimeRoot/node_modules/tsx/dist/cli.mjs" \

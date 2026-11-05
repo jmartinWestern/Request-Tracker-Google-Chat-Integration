@@ -1,0 +1,21 @@
+services:
+  request-tracker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      RT_ALLOW_UNAUTHENTICATED_DEV: ${RT_ALLOW_UNAUTHENTICATED_DEV:-false}
+      PORT: 3000
+      RT_CONNECT_DATA_DIR: /var/lib/request-tracker-google-chat
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - request-tracker-data:/var/lib/request-tracker-google-chat
+    restart: unless-stopped
+
+volumes:
+  request-tracker-data:

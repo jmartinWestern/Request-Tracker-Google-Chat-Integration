@@ -154,7 +154,7 @@ From a trusted host, test the same token used by the service:
 curl --fail-with-body \
   -H "Authorization: token $RT_AUTH_TOKEN" \
   -H 'Accept: application/json' \
-  "$RT_BASE_URL/REST/2.0/queues/all"
+  "$RT_BASE_URL/REST/2.0/queues"
 ```
 
 Then test a ticket the integration user can access:
@@ -462,7 +462,7 @@ Do not terminate TLS at RT Connect itself without a separate certificate and har
 ## Verification Checklist
 
 1. `nix flake check` passes; this validates the package and module output shape.
-2. RT REST2 `queues/all` succeeds with the integration token.
+2. RT REST2 `queues` succeeds with the integration token.
 3. RT ticket GET returns lifecycle and correspondence hyperlinks.
 4. `GET /api/rt/config` returns redacted credentials.
 5. A signed webhook returns HTTP 200.

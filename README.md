@@ -3,6 +3,7 @@
 RT Connect provides a React operations dashboard and Express integration API for Request Tracker and Google Chat.
 
 See [the complete setup guide](docs/setup.md) for Google Cloud, Google Chat, Firebase, RT REST2, signed webhooks, sops-nix, NixOS, verification, and troubleshooting.
+See the [API reference](docs/api.md) for route authentication, request shapes, responses, and exposure rules.
 
 ## Development
 
@@ -12,15 +13,7 @@ See [the complete setup guide](docs/setup.md) for Google Cloud, Google Chat, Fir
 4. Run `npm run lint` and `npm run build`.
 5. Run `npm run dev`.
 
-The dashboard uses seeded local data when RT credentials are absent. Production mode requires `RT_CONNECT_ADMIN_TOKEN`; configure the same value as `VITE_RT_CONNECT_ADMIN_TOKEN` for browser access.
-
-## Integration Routes
-
-- `POST /api/webhooks/rt-ticket-created`: signed RT event ingress. Send `X-RT-Timestamp`, `X-RT-Signature`, and optional `X-RT-Event-Id`. Signature is HMAC-SHA256 over `timestamp.raw_body`.
-- `POST /api/chat/interactive`: Google Chat card actions or dashboard status actions.
-- `POST /api/rt/tickets/:id/correspond`: validated internal RT correspondence.
-- `PUT /api/rt/tickets/:id/status`: validated RT status update.
-- `GET /api/rt/config`: safe configuration view; credentials are redacted.
+The dashboard uses seeded local data when RT credentials are absent. Production mode requires `RT_CONNECT_ADMIN_TOKEN`; serve dashboard API routes behind an authenticated reverse proxy that injects the matching `X-RT-Connect-Admin-Token` header.
 
 Never commit `.env`, RT tokens, webhook secrets, or `data/store.json` containing runtime records.
 
