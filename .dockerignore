@@ -6,6 +6,7 @@ build
 coverage
 data/store.json
 *.log
+*.tar.gz
 *.pem
 *.key
 credentials*.json

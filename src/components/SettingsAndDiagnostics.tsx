@@ -13,18 +13,36 @@ import {
   Save,
   Radio,
   Zap,
+  Activity as ActivityIcon,
+  RefreshCw,
+  Trash2,
 } from 'lucide-react';
+
+export interface DiagnosticEvent {
+  id: string;
+  timestamp: string;
+  level: 'info' | 'warn' | 'error';
+  scope: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
 
 interface SettingsAndDiagnosticsProps {
   config: RtConfig;
   onSaveConfig: (updated: Partial<RtConfig>) => Promise<void>;
   onTestConnection: (baseUrl: string, token: string) => Promise<any>;
+  diagnostics: DiagnosticEvent[];
+  onRefreshDiagnostics: () => Promise<void>;
+  onClearDiagnostics: () => Promise<void>;
 }
 
 export const SettingsAndDiagnostics: React.FC<SettingsAndDiagnosticsProps> = ({
   config,
   onSaveConfig,
   onTestConnection,
+  diagnostics,
+  onRefreshDiagnostics,
+  onClearDiagnostics,
 }) => {
   const [formData, setFormData] = useState<RtConfig>({ ...config });
   const [testResult, setTestResult] = useState<any>(null);
@@ -32,6 +50,8 @@ export const SettingsAndDiagnostics: React.FC<SettingsAndDiagnosticsProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [savedBanner, setSavedBanner] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [isRefreshingDiagnostics, setIsRefreshingDiagnostics] = useState(false);
+  const [isClearingDiagnostics, setIsClearingDiagnostics] = useState(false);
 
   const copyField = (field: string, text: string) => {
     navigator.clipboard.writeText(text);
@@ -61,6 +81,24 @@ export const SettingsAndDiagnostics: React.FC<SettingsAndDiagnosticsProps> = ({
       setTestResult({ success: false, message: err.message });
     } finally {
       setIsTesting(false);
+    }
+  };
+
+  const refreshDiagnostics = async () => {
+    setIsRefreshingDiagnostics(true);
+    try {
+      await onRefreshDiagnostics();
+    } finally {
+      setIsRefreshingDiagnostics(false);
+    }
+  };
+
+  const clearDiagnostics = async () => {
+    setIsClearingDiagnostics(true);
+    try {
+      await onClearDiagnostics();
+    } finally {
+      setIsClearingDiagnostics(false);
     }
   };
 
@@ -118,7 +156,7 @@ $req->header('X-RT-Signature' => 'sha256=' . $signature);
 $req->header('X-RT-Event-Id' => $payload->{eventId});
 $req->content($body);
 
-my $res = LWP::UserAgent->new(timeout => 10)->request($req);
+my $res = LWP::UserAgent->new(timeout => 90)->request($req);
 if (!$res->is_success) {
     RT::Logger->error('RT Connect webhook failed: ' . $res->status_line);
 }
@@ -437,6 +475,64 @@ return 1;
             )}
           </div>
         </div>
+
+        <section className="lg:col-span-12 bg-slate-900 rounded-xl border border-slate-800 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <ActivityIcon className="w-4 h-4 text-amber-400" />
+                <span>Live Integration Diagnostics</span>
+                <span className="text-[10px] font-mono text-slate-500">{diagnostics.length} events</span>
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-1">
+                In-memory RT and Google Chat events from current container process. Secrets and raw payloads are excluded.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={refreshDiagnostics}
+                disabled={isRefreshingDiagnostics}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-md disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3 h-3 ${isRefreshingDiagnostics ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+              <button
+                type="button"
+                onClick={clearDiagnostics}
+                disabled={isClearingDiagnostics || diagnostics.length === 0}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] text-rose-300 hover:text-rose-200 bg-rose-950/40 hover:bg-rose-950/70 rounded-md disabled:opacity-50"
+              >
+                <Trash2 className="w-3 h-3" />
+                Clear
+              </button>
+            </div>
+          </div>
+          <div className="mt-3 max-h-96 overflow-auto rounded-lg border border-slate-800 bg-slate-950">
+            {diagnostics.length === 0 ? (
+              <p className="p-4 text-xs text-slate-500">No diagnostics recorded. Click Refresh after running an integration action.</p>
+            ) : (
+              <div className="divide-y divide-slate-800/80">
+                {diagnostics.map((event) => (
+                  <div key={event.id} className="p-3 text-[11px] font-mono">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className={event.level === 'error' ? 'text-rose-400' : event.level === 'warn' ? 'text-amber-400' : 'text-emerald-400'}>
+                        {event.level.toUpperCase()}
+                      </span>
+                      <span className="text-indigo-300">{event.scope}</span>
+                      <span className="text-slate-600">{new Date(event.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                    <p className="mt-1 text-slate-300">{event.message}</p>
+                    {event.details && Object.keys(event.details).length > 0 && (
+                      <pre className="mt-1 whitespace-pre-wrap break-words text-slate-500">{JSON.stringify(event.details, null, 2)}</pre>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
       </div>
     </div>
   );

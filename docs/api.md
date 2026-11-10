@@ -18,6 +18,8 @@ RT Connect serves dashboard APIs under `/api`. "Public" means a reverse proxy ma
 | `POST /api/rt/tickets/:id/correspond` | Private | `X-RT-Connect-Admin-Token` in production | Dashboard |
 | `GET /api/activity` | Private | `X-RT-Connect-Admin-Token` in production | Dashboard |
 | `DELETE /api/activity` | Private | `X-RT-Connect-Admin-Token` in production | Dashboard |
+| `GET /api/diagnostics` | Private | `X-RT-Connect-Admin-Token` in production | Debug panel |
+| `DELETE /api/diagnostics` | Private | `X-RT-Connect-Admin-Token` in production | Debug panel |
 | `POST /api/webhooks/simulate` | Private | `X-RT-Connect-Admin-Token` in production | Testing only |
 
 The dashboard HTML may be public or private, but its API routes remain private. The production browser build does not contain the admin token. An authenticated reverse proxy must inject `X-RT-Connect-Admin-Token` only for private dashboard/API routes. Never inject that header into `/api/chat/interactive`, because the header can bypass Google Chat identity verification.
@@ -154,6 +156,14 @@ Returns webhook and Chat interaction logs. Credentials and sensitive payload fie
 ### `DELETE /api/activity`
 
 Clears local activity logs. It does not delete RT tickets or Chat messages.
+
+### `GET /api/diagnostics`
+
+Returns up to 150 in-memory diagnostic events from the current server process. Events include scope, level, duration, HTTP status, ticket ID, and safe error metadata. Tokens, raw request bodies, webhook signatures, and correspondence content are excluded. Restarting the process clears this buffer.
+
+### `DELETE /api/diagnostics`
+
+Clears the in-memory diagnostic buffer. It does not clear activity logs, tickets, or persisted configuration.
 
 ### `POST /api/webhooks/simulate`
 

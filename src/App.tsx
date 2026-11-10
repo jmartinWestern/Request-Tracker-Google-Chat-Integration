@@ -4,7 +4,7 @@ import { WebhookFeed } from './components/WebhookFeed';
 import { ChatSimulator } from './components/ChatSimulator';
 import { TicketExplorer } from './components/TicketExplorer';
 import { UserLookupTester } from './components/UserLookupTester';
-import { SettingsAndDiagnostics } from './components/SettingsAndDiagnostics';
+import { SettingsAndDiagnostics, type DiagnosticEvent } from './components/SettingsAndDiagnostics';
 import { initAuth, googleSignIn, logout, getAccessToken } from './services/firebaseAuth';
 import { type User } from 'firebase/auth';
 import {
@@ -55,6 +55,7 @@ export default function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [webhookLogs, setWebhookLogs] = useState<WebhookLogItem[]>([]);
   const [chatInteractionLogs, setChatInteractionLogs] = useState<ChatInteractionLogItem[]>([]);
+  const [diagnosticEvents, setDiagnosticEvents] = useState<DiagnosticEvent[]>([]);
   const [tickets, setTickets] = useState<RtTicket[]>([]);
   const [selectedTicketId, setSelectedTicketId] = useState<string | number | null>(null);
   const [config, setConfig] = useState<RtConfig>({
@@ -86,10 +87,11 @@ export default function App() {
   // Fetch initial activity, tickets, and config
   const fetchData = async () => {
     try {
-      const [activityRes, ticketsRes, configRes] = await Promise.all([
+      const [activityRes, ticketsRes, configRes, diagnosticsRes] = await Promise.all([
         apiFetch('/api/activity'),
         apiFetch('/api/rt/tickets'),
         apiFetch('/api/rt/config'),
+        apiFetch('/api/diagnostics'),
       ]);
 
       if (activityRes.ok) {
@@ -110,6 +112,11 @@ export default function App() {
         const configData = await configRes.json();
         setConfig(configData);
         if (configData.adminToken) setServerAdminToken(configData.adminToken);
+      }
+
+      if (diagnosticsRes.ok) {
+        const diagnosticsData = await diagnosticsRes.json();
+        setDiagnosticEvents(diagnosticsData.events || []);
       }
     } catch (err) {
       console.error('Failed to fetch initial data:', err);
@@ -254,6 +261,19 @@ export default function App() {
     await fetchData();
   };
 
+  const handleRefreshDiagnostics = async () => {
+    const res = await apiFetch('/api/diagnostics');
+    if (!res.ok) throw new Error(`Failed to load diagnostics: ${await readErrorDetail(res)}`);
+    const data = await res.json();
+    setDiagnosticEvents(data.events || []);
+  };
+
+  const handleClearDiagnostics = async () => {
+    const res = await apiFetch('/api/diagnostics', { method: 'DELETE' });
+    if (!res.ok) throw new Error(`Failed to clear diagnostics: ${await readErrorDetail(res)}`);
+    setDiagnosticEvents([]);
+  };
+
   const currentUserEmail = user?.email || 'jmartin@example.org';
 
   return (
@@ -330,6 +350,9 @@ export default function App() {
                 config={config}
                 onSaveConfig={handleSaveConfig}
                 onTestConnection={handleTestConnection}
+                diagnostics={diagnosticEvents}
+                onRefreshDiagnostics={handleRefreshDiagnostics}
+                onClearDiagnostics={handleClearDiagnostics}
               />
             )}
           </>

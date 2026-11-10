@@ -84,6 +84,40 @@ interface AppStore {
   operationReceipts: Record<string, { status: string; updatedAt: string }>;
 }
 
+type DiagnosticLevel = 'info' | 'warn' | 'error';
+interface DiagnosticEvent {
+  id: string;
+  timestamp: string;
+  level: DiagnosticLevel;
+  scope: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+const diagnosticEvents: DiagnosticEvent[] = [];
+
+function recordDiagnostic(
+  level: DiagnosticLevel,
+  scope: string,
+  message: string,
+  details: Record<string, unknown> = {}
+) {
+  const event = {
+    id: `diag-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    timestamp: new Date().toISOString(),
+    level,
+    scope,
+    message,
+    details,
+  };
+  diagnosticEvents.unshift(event);
+  if (diagnosticEvents.length > 150) diagnosticEvents.length = 150;
+  const serialized = JSON.stringify({ diagnostic: event });
+  if (level === 'error') console.error(serialized);
+  else if (level === 'warn') console.warn(serialized);
+  else console.info(serialized);
+}
+
 const defaultStore: AppStore = {
   config: {
     rtBaseUrl: process.env.RT_BASE_URL || 'https://rt.example.org',
@@ -491,7 +525,7 @@ async function lookupRtUser(email: string, config: AppStore['config']) {
   if (!config.rtAuthToken || !config.rtBaseUrl.startsWith('http')) {
     // Return standard mock lookup based on RT specification
     const namePart = email.split('@')[0];
-    return {
+    const result = {
       success: true,
       user: {
         type: 'user',
@@ -503,12 +537,21 @@ async function lookupRtUser(email: string, config: AppStore['config']) {
       source: 'offline_catalog',
       message: undefined,
     };
+    recordDiagnostic('info', 'rt.user-lookup', 'Used offline user catalog', { emailProvided: Boolean(email) });
+    return result;
   }
 
+  const startedAt = Date.now();
+  let host = 'unknown';
+  try { host = new URL(config.rtBaseUrl).host; } catch { /* request will report URL failure below */ }
+  recordDiagnostic('info', 'rt.user-lookup', 'Starting RT user lookup', {
+    host,
+    emailProvided: Boolean(email),
+  });
   try {
     const query = JSON.stringify([{ field: 'EmailAddress', operator: '=', value: email }]);
     const url = `${config.rtBaseUrl.replace(/\/$/, '')}/REST/2.0/users?query=${encodeURIComponent(query)}`;
-    return await withRetry(async (_attempt, signal) => {
+    const result = await withRetry(async (attempt, signal) => {
       const res = await fetch(url, {
         method: 'GET',
         headers: { Authorization: `token ${config.rtAuthToken}`, Accept: 'application/json' },
@@ -516,6 +559,10 @@ async function lookupRtUser(email: string, config: AppStore['config']) {
       });
       const data: any = await res.json().catch(() => ({}));
       if (!res.ok) {
+        recordDiagnostic('warn', 'rt.user-lookup', 'RT user lookup returned an error', {
+          attempt,
+          status: res.status,
+        });
         const error: any = new Error(data.message || `RT user search returned HTTP ${res.status}`);
         error.status = res.status;
         throw error;
@@ -537,14 +584,27 @@ async function lookupRtUser(email: string, config: AppStore['config']) {
       }
       return { success: true, user: detailRes.ok ? detailData : firstUser, source: 'rt_rest2', message: undefined };
     }, { timeoutMs: 8000, maxRetries: 2 });
+    recordDiagnostic('info', 'rt.user-lookup', 'RT user lookup completed', {
+      durationMs: Date.now() - startedAt,
+      success: result.success,
+      source: result.source,
+    });
+    return result;
   } catch (err: any) {
     console.warn('RT user lookup failed:', err.message);
+    recordDiagnostic('error', 'rt.user-lookup', 'RT user lookup failed', {
+      durationMs: Date.now() - startedAt,
+      error: err.message,
+      status: err.status,
+    });
     return { success: false, user: null, source: 'rt_rest2', message: err.message, status: err.status };
   }
 }
 
 async function getRtTicketState(ticketId: string | number, config: AppStore['config']) {
   const url = `${config.rtBaseUrl.replace(/\/$/, '')}/REST/2.0/ticket/${encodeURIComponent(String(ticketId))}`;
+  const startedAt = Date.now();
+  recordDiagnostic('info', 'rt.ticket-read', 'Reading RT ticket', { ticketId });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Number(process.env.OUTBOUND_TIMEOUT_MS || 8000));
   try {
@@ -554,10 +614,21 @@ async function getRtTicketState(ticketId: string | number, config: AppStore['con
     });
     const data: any = await response.json().catch(() => ({}));
     if (!response.ok) {
+      recordDiagnostic('warn', 'rt.ticket-read', 'RT ticket read returned an error', {
+        ticketId,
+        status: response.status,
+        durationMs: Date.now() - startedAt,
+      });
       const error: any = new Error(data.message || `RT ticket lookup returned HTTP ${response.status}`);
       error.status = response.status;
       throw error;
     }
+    recordDiagnostic('info', 'rt.ticket-read', 'RT ticket read completed', {
+      ticketId,
+      status: response.status,
+      remoteStatus: data?.Status,
+      durationMs: Date.now() - startedAt,
+    });
     return { data, etag: response.headers.get('etag') || undefined, url };
   } finally {
     clearTimeout(timeout);
@@ -583,6 +654,7 @@ function formatRtError(error: any) {
 // RT REST 2.0 Ticket Status Update
 async function updateRtTicketInRemote(ticketId: string | number, status: string, config: AppStore['config']) {
   if (!config.rtAuthToken || !config.rtBaseUrl.startsWith('http')) {
+    recordDiagnostic('warn', 'rt.ticket-status', 'Skipped remote status update; RT credentials are not configured', { ticketId, status });
     return {
       success: true,
       message: `Status updated to '${status}' in RT mock store`,
@@ -590,11 +662,24 @@ async function updateRtTicketInRemote(ticketId: string | number, status: string,
     };
   }
 
+  const startedAt = Date.now();
+  recordDiagnostic('info', 'rt.ticket-status', 'Starting RT status update', { ticketId, status });
   try {
     const current = await getRtTicketState(ticketId, config);
     const lifecycle = getLifecycleLink(current.data, status);
     if (!lifecycle) {
-      if (current.data?.Status === status) return { success: true, message: 'RT ticket already has requested status', syncedWithRemote: true };
+      if (current.data?.Status === status) {
+        recordDiagnostic('info', 'rt.ticket-status', 'RT ticket already has requested status', { ticketId, status });
+        return { success: true, message: 'RT ticket already has requested status', syncedWithRemote: true };
+      }
+      recordDiagnostic('warn', 'rt.ticket-status', 'RT did not expose requested lifecycle transition', {
+        ticketId,
+        status,
+        currentStatus: current.data?.Status,
+        lifecycleCount: Array.isArray(current.data?._hyperlinks)
+          ? current.data._hyperlinks.filter((link: any) => link.ref === 'lifecycle').length
+          : 0,
+      });
       const error: any = new Error(`RT does not expose permitted lifecycle transition to '${status}'`);
       error.status = 409;
       return formatRtError(error);
@@ -612,6 +697,12 @@ async function updateRtTicketInRemote(ticketId: string | number, status: string,
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
+      recordDiagnostic('error', 'rt.ticket-status', 'RT rejected status update', {
+        ticketId,
+        status,
+        remoteStatus: response.status,
+        durationMs: Date.now() - startedAt,
+      });
       if (response.status === 412) {
         const reconciled = await getRtTicketState(ticketId, config).catch(() => null);
         if (reconciled?.data?.Status === status) return { success: true, message: 'RT status already applied after concurrent update', syncedWithRemote: true };
@@ -620,8 +711,21 @@ async function updateRtTicketInRemote(ticketId: string | number, status: string,
       error.status = response.status;
       return formatRtError(error);
     }
+    recordDiagnostic('info', 'rt.ticket-status', 'RT status update completed', {
+      ticketId,
+      status,
+      remoteStatus: response.status,
+      durationMs: Date.now() - startedAt,
+    });
     return { success: true, message: JSON.stringify(data), syncedWithRemote: true };
   } catch (err: any) {
+    recordDiagnostic('error', 'rt.ticket-status', 'RT status update failed', {
+      ticketId,
+      status,
+      durationMs: Date.now() - startedAt,
+      error: err.message,
+      remoteStatus: err.status,
+    });
     return formatRtError(err);
   }
 }
@@ -634,6 +738,7 @@ async function addRtCorrespondenceInRemote(
   config: AppStore['config']
 ) {
   if (!config.rtAuthToken || !config.rtBaseUrl.startsWith('http')) {
+    recordDiagnostic('warn', 'rt.correspondence', 'Skipped remote correspondence; RT credentials are not configured', { ticketId });
     return {
       success: true,
       message: `Correspondence posted to RT mock store`,
@@ -641,10 +746,16 @@ async function addRtCorrespondenceInRemote(
     };
   }
 
+  const startedAt = Date.now();
+  recordDiagnostic('info', 'rt.correspondence', 'Starting RT correspondence', {
+    ticketId,
+    contentLength: content.length,
+  });
   try {
     const current = await getRtTicketState(ticketId, config);
     const correspond = getHyperlink(current.data, 'correspond');
     if (!correspond?._url) {
+      recordDiagnostic('warn', 'rt.correspondence', 'RT did not expose correspondence permission', { ticketId });
       const error: any = new Error('RT does not expose correspondence permission for this ticket');
       error.status = 403;
       return formatRtError(error);
@@ -661,12 +772,28 @@ async function addRtCorrespondenceInRemote(
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
+      recordDiagnostic('error', 'rt.correspondence', 'RT rejected correspondence', {
+        ticketId,
+        remoteStatus: response.status,
+        durationMs: Date.now() - startedAt,
+      });
       const error: any = new Error(data.message || `RT returned HTTP ${response.status}`);
       error.status = response.status;
       return formatRtError(error);
     }
+    recordDiagnostic('info', 'rt.correspondence', 'RT correspondence completed', {
+      ticketId,
+      remoteStatus: response.status,
+      durationMs: Date.now() - startedAt,
+    });
     return { success: true, message: JSON.stringify(data), syncedWithRemote: true };
   } catch (err: any) {
+    recordDiagnostic('error', 'rt.correspondence', 'RT correspondence failed', {
+      ticketId,
+      durationMs: Date.now() - startedAt,
+      error: err.message,
+      remoteStatus: err.status,
+    });
     return formatRtError(err);
   }
 }
@@ -674,9 +801,17 @@ async function addRtCorrespondenceInRemote(
 // Send Card to Google Chat Space Webhook if configured
 async function dispatchToGoogleChatSpace(cardV2: any, webhookUrl: string) {
   const apiSpace = process.env.GOOGLE_CHAT_SPACE_NAME;
-  if (!webhookUrl && !apiSpace) return { sent: false, message: 'Google Chat delivery is not configured' };
+  if (!webhookUrl && !apiSpace) {
+    recordDiagnostic('warn', 'google-chat.dispatch', 'Google Chat delivery is not configured');
+    return { sent: false, message: 'Google Chat delivery is not configured' };
+  }
+  const startedAt = Date.now();
+  recordDiagnostic('info', 'google-chat.dispatch', 'Starting Google Chat delivery', {
+    mode: webhookUrl ? 'incoming-webhook' : 'chat-api',
+    cardId: cardV2?.cardId,
+  });
   try {
-    return await withRetry(async (_attempt, signal) => {
+    const result = await withRetry(async (attempt, signal) => {
       let targetUrl = webhookUrl;
       let headers: Record<string, string> = { 'Content-Type': 'application/json; charset=UTF-8' };
       if (!targetUrl && apiSpace) {
@@ -688,13 +823,27 @@ async function dispatchToGoogleChatSpace(cardV2: any, webhookUrl: string) {
       if (!targetUrl?.startsWith('https://chat.googleapis.com/')) throw new Error('Invalid Google Chat delivery URL');
       const res = await fetch(targetUrl, { method: 'POST', headers, body: JSON.stringify({ cardsV2: [cardV2] }), signal });
       if (!res.ok) {
+        recordDiagnostic('warn', 'google-chat.dispatch', 'Google Chat returned an error', {
+          attempt,
+          status: res.status,
+        });
         const error: any = new Error(`Google Chat returned HTTP ${res.status}`);
         error.status = res.status;
         throw error;
       }
       return { sent: true, message: apiSpace && !webhookUrl ? 'Successfully dispatched through Google Chat API' : 'Successfully dispatched to Google Chat Space webhook' };
     }, { timeoutMs: Number(process.env.OUTBOUND_TIMEOUT_MS || 8000), maxRetries: Number(process.env.MAX_RETRIES || 2) });
+    recordDiagnostic('info', 'google-chat.dispatch', 'Google Chat delivery completed', {
+      durationMs: Date.now() - startedAt,
+      sent: result.sent,
+    });
+    return result;
   } catch (err: any) {
+    recordDiagnostic('error', 'google-chat.dispatch', 'Google Chat delivery failed', {
+      durationMs: Date.now() - startedAt,
+      error: err.message,
+      status: err.status,
+    });
     return { sent: false, message: `Dispatch error: ${err.message}` };
   }
 }
@@ -706,6 +855,14 @@ app.post('/api/webhooks/rt-ticket-created', async (req: Request, res: Response) 
   const store = getStore();
   const payload = req.body;
   const rawBody = (req as Request & { rawBody?: string }).rawBody || JSON.stringify(payload);
+  const eventId = String(req.header('x-rt-event-id') || payload?.eventId || cryptoHash(rawBody));
+  const webhookStartedAt = Date.now();
+  recordDiagnostic('info', 'rt.webhook', 'Received RT webhook', {
+    eventId,
+    event: payload?.event,
+    ticketId: payload?.ticket?.id,
+    bodyBytes: Buffer.byteLength(rawBody),
+  });
   const signature = req.header('x-rt-signature');
   const timestamp = req.header('x-rt-timestamp');
   const signatureValid = verifyRtSignature({
@@ -717,6 +874,7 @@ app.post('/api/webhooks/rt-ticket-created', async (req: Request, res: Response) 
   });
 
   if (!signatureValid && !(allowUnauthenticatedDevelopment() && payload?.secretToken && payload.secretToken === store.config.webhookSecret)) {
+    recordDiagnostic('warn', 'rt.webhook', 'Rejected RT webhook signature', { eventId });
     return res.status(401).json({ error: 'Invalid or missing RT webhook signature' });
   }
   try {
@@ -725,9 +883,11 @@ app.post('/api/webhooks/rt-ticket-created', async (req: Request, res: Response) 
     return res.status(400).json({ error: error.message });
   }
 
-  const eventId = String(req.header('x-rt-event-id') || payload.eventId || cryptoHash(rawBody));
   const existingReceipt = store.eventReceipts[eventId];
-  if (existingReceipt) return res.status(200).json({ ...(existingReceipt.response as object || {}), duplicate: true });
+  if (existingReceipt) {
+    recordDiagnostic('info', 'rt.webhook', 'Ignored duplicate RT webhook', { eventId });
+    return res.status(200).json({ ...(existingReceipt.response as object || {}), duplicate: true });
+  }
   store.eventReceipts[eventId] = { status: 'processing', updatedAt: new Date().toISOString() };
   saveStore(store);
 
@@ -841,6 +1001,12 @@ app.post('/api/webhooks/rt-ticket-created', async (req: Request, res: Response) 
   };
   store.eventReceipts[eventId] = { status: 'completed', response, updatedAt: new Date().toISOString() };
   saveStore(store);
+  recordDiagnostic('info', 'rt.webhook', 'Completed RT webhook', {
+    eventId,
+    ticketId,
+    spaceStatus,
+    durationMs: Date.now() - webhookStartedAt,
+  });
   return res.status(200).json(response);
 });
 
@@ -867,6 +1033,12 @@ app.post('/api/chat/interactive', requireChatIdentity, async (req: Request, res:
   const newStatus = paramMap.status || body.status;
   const actorEmail = body.user?.email || body.actorEmail || 'jmartin@example.org';
   const actorName = body.user?.displayName || body.actorName || 'Example Agent';
+  recordDiagnostic('info', 'google-chat.interactive', 'Received Google Chat action', {
+    actionFunction,
+    ticketId,
+    status: newStatus,
+    actorEmailProvided: Boolean(body.user?.email || body.actorEmail),
+  });
 
   if (!ticketId) {
     return res.status(400).json({ error: 'Missing ticketId in interactive card action' });
@@ -933,6 +1105,14 @@ app.post('/api/chat/interactive', requireChatIdentity, async (req: Request, res:
 
   store.operationReceipts[operationId] = { status: rtSyncRes.success ? 'completed' : 'failed', updatedAt: new Date().toISOString() };
   saveStore(store);
+  recordDiagnostic(rtSyncRes.success ? 'info' : 'error', 'google-chat.interactive', 'Completed Google Chat action', {
+    actionFunction,
+    ticketId,
+    status: newStatus,
+    syncedWithRemote: rtSyncRes.syncedWithRemote,
+    success: rtSyncRes.success,
+    message: rtSyncRes.message,
+  });
 
   // Return Google Chat Action Response to update the card in-place
   const updatedCard = buildGoogleChatCard({
@@ -1057,6 +1237,7 @@ app.post('/api/rt/test-connection', async (req: Request, res: Response) => {
   const authToken = rtAuthToken === '[configured]' ? configuredToken : rtAuthToken;
 
   if (typeof rtBaseUrl !== 'string' || !rtBaseUrl.startsWith('http')) {
+    recordDiagnostic('warn', 'rt.connection-test', 'Rejected invalid RT base URL');
     return res.status(400).json({
       success: false,
       message: 'Invalid RT Base URL. Must start with http:// or https://',
@@ -1069,6 +1250,7 @@ app.post('/api/rt/test-connection', async (req: Request, res: Response) => {
     configuredUrl = new URL(store.config.rtBaseUrl);
     requestedUrl = new URL(rtBaseUrl);
   } catch {
+    recordDiagnostic('warn', 'rt.connection-test', 'Rejected unparsable RT base URL');
     return res.status(400).json({ success: false, message: 'Invalid RT Base URL' });
   }
 
@@ -1081,6 +1263,10 @@ app.post('/api/rt/test-connection', async (req: Request, res: Response) => {
     requestedUrl.hash ||
     normalizeBaseUrl(requestedUrl) !== normalizeBaseUrl(configuredUrl)
   ) {
+    recordDiagnostic('warn', 'rt.connection-test', 'Rejected RT connection target', {
+      requestedHost: requestedUrl.host,
+      configuredHost: configuredUrl.host,
+    });
     return res.status(400).json({
       success: false,
       message: 'Save RT Base URL before testing connection',
@@ -1089,6 +1275,10 @@ app.post('/api/rt/test-connection', async (req: Request, res: Response) => {
 
   const startTime = Date.now();
   const testUrl = `${normalizeBaseUrl(requestedUrl)}/REST/2.0/queues`;
+  recordDiagnostic('info', 'rt.connection-test', 'Starting RT connectivity test', {
+    host: requestedUrl.host,
+    tokenConfigured: Boolean(authToken),
+  });
   console.info(`[rt-test-connection] request host=${requestedUrl.host} tokenConfigured=${Boolean(authToken)}`);
   let timeout: ReturnType<typeof setTimeout> | undefined;
 
@@ -1109,6 +1299,11 @@ app.post('/api/rt/test-connection', async (req: Request, res: Response) => {
     const latency = Date.now() - startTime;
 
     if (response.ok) {
+      recordDiagnostic('info', 'rt.connection-test', 'RT connectivity test succeeded', {
+        host: requestedUrl.host,
+        status: response.status,
+        latencyMs: latency,
+      });
       console.info(`[rt-test-connection] success status=${response.status} latencyMs=${latency}`);
       return res.status(200).json({
         success: true,
@@ -1117,6 +1312,11 @@ app.post('/api/rt/test-connection', async (req: Request, res: Response) => {
         message: 'Connected to Request Tracker REST 2.0 API successfully',
       });
     } else {
+      recordDiagnostic('error', 'rt.connection-test', 'RT connectivity test returned an error', {
+        host: requestedUrl.host,
+        status: response.status,
+        latencyMs: latency,
+      });
       console.warn(`[rt-test-connection] failure status=${response.status} latencyMs=${latency}`);
       return res.status(502).json({
         success: false,
@@ -1127,6 +1327,11 @@ app.post('/api/rt/test-connection', async (req: Request, res: Response) => {
     }
   } catch (err: any) {
     const reason = err.name === 'AbortError' ? 'request timed out after 5000ms' : err.message;
+    recordDiagnostic('error', 'rt.connection-test', 'RT connectivity test failed', {
+      host: requestedUrl.host,
+      latencyMs: Date.now() - startTime,
+      reason,
+    });
     console.error(`[rt-test-connection] error url=${testUrl} latencyMs=${Date.now() - startTime} reason=${JSON.stringify(reason)}`);
     return res.status(502).json({
       success: false,
@@ -1154,7 +1359,18 @@ app.post('/api/rt/config', (req: Request, res: Response) => {
   return res.status(200).json({ success: true, config: getSafeConfig(store.config) });
 });
 
-// 8. Get Tickets and Activity
+// 8. In-memory integration diagnostics
+app.get('/api/diagnostics', (_req: Request, res: Response) => {
+  return res.status(200).json({ events: diagnosticEvents });
+});
+
+app.delete('/api/diagnostics', (_req: Request, res: Response) => {
+  diagnosticEvents.length = 0;
+  recordDiagnostic('info', 'diagnostics', 'Diagnostic buffer cleared');
+  return res.status(200).json({ success: true });
+});
+
+// 9. Get Tickets and Activity
 app.get('/api/rt/tickets', (_req: Request, res: Response) => {
   const store = getStore();
   return res.status(200).json(store.tickets);
