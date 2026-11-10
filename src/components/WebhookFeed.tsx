@@ -27,6 +27,7 @@ interface WebhookFeedProps {
   }) => Promise<void>;
   onClearLogs: () => Promise<void>;
   onRefresh: () => Promise<void>;
+  onResendWebhook: (logId: string) => Promise<void>;
   onSelectForChatSimulator: (ticketId: string | number) => void;
 }
 
@@ -66,11 +67,14 @@ export const WebhookFeed: React.FC<WebhookFeedProps> = ({
   onSimulateWebhook,
   onClearLogs,
   onRefresh,
+  onResendWebhook,
   onSelectForChatSimulator,
 }) => {
   const [selectedLog, setSelectedLog] = useState<WebhookLogItem | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
+  const [resendingLogId, setResendingLogId] = useState<string | null>(null);
+  const [resendMessage, setResendMessage] = useState<string | null>(null);
   const [activeSubTab, setActiveSubTab] = useState<'webhooks' | 'interactions'>('webhooks');
 
   const copyToClipboard = (text: string, id: string) => {
@@ -85,6 +89,19 @@ export const WebhookFeed: React.FC<WebhookFeedProps> = ({
       await onSimulateWebhook(preset);
     } finally {
       setIsSimulating(false);
+    }
+  };
+
+  const handleResend = async (log: WebhookLogItem) => {
+    setResendingLogId(log.id);
+    try {
+      await onResendWebhook(log.id);
+      setResendMessage(`RT #${log.ticketId} card resent to Google Chat.`);
+    } catch (error: any) {
+      setResendMessage(`Resend failed: ${error.message}`);
+    } finally {
+      setResendingLogId(null);
+      setTimeout(() => setResendMessage(null), 5000);
     }
   };
 
@@ -122,10 +139,16 @@ export const WebhookFeed: React.FC<WebhookFeedProps> = ({
               <Trash2 className="w-3.5 h-3.5" />
               <span>Clear Activity</span>
             </button>
+            </div>
           </div>
-        </div>
 
-        {/* Preset Simulators */}
+          {resendMessage && (
+            <div className="mt-3 p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300">
+              {resendMessage}
+            </div>
+          )}
+
+          {/* Preset Simulators */}
         <div className="mt-4 pt-4 border-t border-slate-800/80">
           <div className="flex items-center gap-2 mb-2 text-xs font-medium text-slate-300">
             <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
@@ -285,6 +308,18 @@ export const WebhookFeed: React.FC<WebhookFeedProps> = ({
                         >
                           <span>Open in Simulator</span>
                           <ArrowRight className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleResend(log);
+                          }}
+                          disabled={resendingLogId === log.id}
+                          className="text-xs text-emerald-400 hover:text-emerald-300 font-medium flex items-center gap-1 disabled:opacity-50"
+                          title="Resend stored card to Google Chat"
+                        >
+                          <Send className={`w-3 h-3 ${resendingLogId === log.id ? 'animate-pulse' : ''}`} />
+                          <span>{resendingLogId === log.id ? 'Resending...' : 'Resend to Chat'}</span>
                         </button>
                       </div>
                     </div>

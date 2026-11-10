@@ -18,6 +18,7 @@ RT Connect serves dashboard APIs under `/api`. "Public" means a reverse proxy ma
 | `POST /api/rt/tickets/:id/correspond` | Private | `X-RT-Connect-Admin-Token` in production | Dashboard |
 | `GET /api/activity` | Private | `X-RT-Connect-Admin-Token` in production | Dashboard |
 | `DELETE /api/activity` | Private | `X-RT-Connect-Admin-Token` in production | Dashboard |
+| `POST /api/webhooks/:logId/resend` | Private | `X-RT-Connect-Admin-Token` in production | Dashboard |
 | `GET /api/diagnostics` | Private | `X-RT-Connect-Admin-Token` in production | Debug panel |
 | `DELETE /api/diagnostics` | Private | `X-RT-Connect-Admin-Token` in production | Debug panel |
 | `POST /api/webhooks/simulate` | Private | `X-RT-Connect-Admin-Token` in production | Testing only |
@@ -169,6 +170,17 @@ Returns webhook and Chat interaction logs. Credentials and sensitive payload fie
 ### `DELETE /api/activity`
 
 Clears local activity logs. It does not delete RT tickets or Chat messages.
+
+### `POST /api/webhooks/:logId/resend`
+
+Resends the stored Google Chat card for a webhook log. This does not reprocess the RT webhook, duplicate the ticket, or run RT user lookup again. It updates that log's space delivery status and uses stable `rt-ticket-<ticketId>` thread keys where supported by the Google Chat delivery mode.
+
+Responses:
+
+- `200`: card sent
+- `404`: webhook log ID not found
+- `409`: no stored card exists
+- `502`: Google Chat delivery failed
 
 ### `GET /api/diagnostics`
 

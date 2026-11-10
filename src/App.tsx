@@ -278,6 +278,12 @@ export default function App() {
     await fetchData();
   };
 
+  const handleResendWebhook = async (logId: string) => {
+    const res = await apiFetch(`/api/webhooks/${encodeURIComponent(logId)}/resend`, { method: 'POST' });
+    if (!res.ok) throw new Error(`Resend failed: ${await readErrorDetail(res)}`);
+    await fetchData();
+  };
+
   const handleRefreshDiagnostics = async () => {
     const res = await apiFetch('/api/diagnostics');
     if (!res.ok) throw new Error(`Failed to load diagnostics: ${await readErrorDetail(res)}`);
@@ -326,6 +332,7 @@ export default function App() {
                 onSimulateWebhook={handleSimulateWebhook}
                 onClearLogs={handleClearLogs}
                 onRefresh={fetchData}
+                onResendWebhook={handleResendWebhook}
                 onSelectForChatSimulator={(ticketId) => {
                   setSelectedTicketId(ticketId);
                   setActiveTab('chat-simulator');

@@ -920,7 +920,7 @@ async function addRtCorrespondenceInRemote(
 }
 
 // Send Card to Google Chat Space Webhook if configured
-async function dispatchToGoogleChatSpace(cardV2: any, webhookUrl: string) {
+async function dispatchToGoogleChatSpace(cardV2: any, webhookUrl: string, threadKey?: string | number) {
   const apiSpace = process.env.GOOGLE_CHAT_SPACE_NAME;
   if (!webhookUrl && !apiSpace) {
     recordDiagnostic('warn', 'google-chat.dispatch', 'Google Chat delivery is not configured');
@@ -942,6 +942,11 @@ async function dispatchToGoogleChatSpace(cardV2: any, webhookUrl: string) {
         targetUrl = `https://chat.googleapis.com/v1/${apiSpace}/messages`;
       }
       if (!targetUrl?.startsWith('https://chat.googleapis.com/')) throw new Error('Invalid Google Chat delivery URL');
+      if (threadKey !== undefined) {
+        const deliveryUrl = new URL(targetUrl);
+        deliveryUrl.searchParams.set('threadKey', `rt-ticket-${threadKey}`);
+        targetUrl = deliveryUrl.toString();
+      }
       const res = await fetch(targetUrl, { method: 'POST', headers, body: JSON.stringify({ cardsV2: [cardV2] }), signal });
       if (!res.ok) {
         recordDiagnostic('warn', 'google-chat.dispatch', 'Google Chat returned an error', {
@@ -1047,7 +1052,7 @@ app.post('/api/webhooks/rt-ticket-created', async (req: Request, res: Response) 
   let spaceStatus: 'sent' | 'skipped' | 'failed' = 'skipped';
   let spaceMessage = 'Space alerts disabled in config';
   if (store.config.enableSpaceAlerts && store.config.googleChatSpaceWebhookUrl) {
-    const spaceRes = await dispatchToGoogleChatSpace(cardV2, store.config.googleChatSpaceWebhookUrl);
+    const spaceRes = await dispatchToGoogleChatSpace(cardV2, store.config.googleChatSpaceWebhookUrl, ticketId);
     spaceStatus = spaceRes.sent ? 'sent' : 'failed';
     spaceMessage = spaceRes.message;
   } else if (store.config.enableSpaceAlerts) {
@@ -1510,6 +1515,33 @@ app.delete('/api/diagnostics', (_req: Request, res: Response) => {
   return res.status(200).json({ success: true });
 });
 
+app.post('/api/webhooks/:logId/resend', async (req: Request, res: Response) => {
+  const store = getStore();
+  const logItem = store.webhookLogs.find((item) => item.id === req.params.logId);
+  if (!logItem) return res.status(404).json({ error: 'Webhook log not found' });
+  if (!logItem.cardV2Preview) return res.status(409).json({ error: 'Webhook log has no stored Google Chat card' });
+
+  recordDiagnostic('info', 'google-chat.resend', 'Starting manual card resend', {
+    logId: logItem.id,
+    ticketId: logItem.ticketId,
+  });
+  const spaceRes = await dispatchToGoogleChatSpace(
+    logItem.cardV2Preview,
+    store.config.googleChatSpaceWebhookUrl,
+    logItem.ticketId
+  );
+  logItem.spaceDispatchStatus = spaceRes.sent ? 'sent' : 'failed';
+  logItem.spaceDispatchMessage = `Manual resend: ${spaceRes.message}`;
+  saveStore(store);
+
+  return res.status(spaceRes.sent ? 200 : 502).json({
+    success: spaceRes.sent,
+    ticketId: logItem.ticketId,
+    spaceStatus: logItem.spaceDispatchStatus,
+    message: spaceRes.message,
+  });
+});
+
 // 9. Get Tickets and Activity
 app.get('/api/rt/tickets', (_req: Request, res: Response) => {
   const store = getStore();
@@ -1618,7 +1650,7 @@ app.post('/api/webhooks/simulate', async (req: Request, res: Response) => {
     : 'Staff-space delivery disabled by configuration';
 
   if (store.config.enableSpaceAlerts && store.config.googleChatSpaceWebhookUrl) {
-    const spaceRes = await dispatchToGoogleChatSpace(cardV2, store.config.googleChatSpaceWebhookUrl);
+    const spaceRes = await dispatchToGoogleChatSpace(cardV2, store.config.googleChatSpaceWebhookUrl, simId);
     spaceStatus = spaceRes.sent ? 'sent' : 'failed';
     spaceMessage = spaceRes.message;
   }
