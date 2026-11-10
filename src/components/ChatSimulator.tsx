@@ -20,6 +20,7 @@ interface ChatSimulatorProps {
   selectedTicketId: string | number | null;
   onSelectTicket: (id: string | number) => void;
   onUpdateStatus: (ticketId: string | number, newStatus: RtTicketStatus) => Promise<void>;
+  onTakeTicket: (ticketId: string | number) => Promise<void>;
   onAddCorrespondence: (
     ticketId: string | number,
     content: string,
@@ -34,6 +35,7 @@ export const ChatSimulator: React.FC<ChatSimulatorProps> = ({
   selectedTicketId,
   onSelectTicket,
   onUpdateStatus,
+  onTakeTicket,
   onAddCorrespondence,
   currentUserEmail,
   rtBaseUrl,
@@ -56,6 +58,20 @@ export const ChatSimulator: React.FC<ChatSimulatorProps> = ({
       setTimeout(() => setFeedbackBanner(null), 4000);
     } catch (err: any) {
       setFeedbackBanner(`Error updating status: ${err.message}`);
+    } finally {
+      setStatusUpdating(null);
+    }
+  };
+
+  const handleTakeTicket = async () => {
+    if (!activeTicket) return;
+    setStatusUpdating('take');
+    try {
+      await onTakeTicket(activeTicket.id);
+      setFeedbackBanner(`Ticket #${activeTicket.id} assigned to ${currentUserEmail}.`);
+      setTimeout(() => setFeedbackBanner(null), 4000);
+    } catch (err: any) {
+      setFeedbackBanner(`Error taking ticket: ${err.message}`);
     } finally {
       setStatusUpdating(null);
     }
@@ -239,7 +255,7 @@ export const ChatSimulator: React.FC<ChatSimulatorProps> = ({
                         </span>
                       </div>
                       <span className="text-[11px] text-emerald-400 font-mono">
-                        RT User ID: #{activeTicket.Owner?.id || '482'}
+                         Owner: {activeTicket.Owner?.Name || 'Unassigned'}
                       </span>
                     </div>
                   </div>
@@ -260,6 +276,13 @@ export const ChatSimulator: React.FC<ChatSimulatorProps> = ({
                     Quick Actions (Updates RT directly):
                   </span>
                   <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={handleTakeTicket}
+                      disabled={statusUpdating !== null || activeTicket.Status === 'resolved'}
+                      className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-40 disabled:pointer-events-none"
+                    >
+                      {statusUpdating === 'take' ? 'Taking...' : activeTicket.Status === 'resolved' ? 'Resolved' : 'Take Ticket'}
+                    </button>
                     <button
                       onClick={() => handleStatusClick('open')}
                       disabled={statusUpdating !== null || activeTicket.Status === 'open'}

@@ -21,7 +21,7 @@ export interface RtTicket {
   Subject: string;
   Status: RtTicketStatus;
   Queue: string;
-  Owner?: { id: string | number; type?: string; Name?: string };
+  Owner?: { id?: string | number; type?: string; Name?: string; EmailAddress?: string };
   Requestor: Array<{ id?: string | number; type?: string; EmailAddress: string; Name?: string }> | string;
   RequestorEmail?: string;
   RequestorName?: string;
@@ -83,7 +83,7 @@ export interface ChatInteractionLogItem {
   ticketId: string | number;
   actorEmail: string;
   actorName?: string;
-  actionType: 'status_change' | 'correspondence' | 'comment';
+  actionType: 'status_change' | 'owner_assignment' | 'correspondence' | 'comment';
   previousValue?: string;
   newValue: string;
   rtSyncStatus: 'synced' | 'failed';

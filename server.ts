@@ -400,6 +400,7 @@ function buildGoogleChatCard(ticket: {
   Content?: string;
   rtUserId?: string | number;
   rtUserIdNote?: string;
+  Owner?: { id?: string | number; Name?: string; EmailAddress?: string };
   rtBaseUrl?: string;
 }) {
   const baseUrl = ticket.rtBaseUrl || 'https://rt.example.org';
@@ -442,6 +443,13 @@ function buildGoogleChatCard(ticket: {
               },
             },
             {
+              decoratedText: {
+                topLabel: 'Owner',
+                text: ticket.Owner?.Name || 'Unassigned',
+                bottomLabel: ticket.Owner?.EmailAddress || '',
+              },
+            },
+            {
               textParagraph: {
                 text: ticket.Content || '(No initial description provided)',
               },
@@ -455,6 +463,15 @@ function buildGoogleChatCard(ticket: {
             {
               buttonList: {
                 buttons: [
+                  ...(ticket.Status !== 'resolved' ? [{
+                    text: 'Take Ticket',
+                    onClick: {
+                      action: {
+                        function: 'take_ticket',
+                        parameters: [{ key: 'ticketId', value: String(ticket.id) }],
+                      },
+                    },
+                  }] : []),
                   {
                     text: 'Open',
                     onClick: {
@@ -727,6 +744,110 @@ async function updateRtTicketInRemote(ticketId: string | number, status: string,
       remoteStatus: err.status,
     });
     return formatRtError(err);
+  }
+}
+
+async function takeRtTicketInRemote(ticketId: string | number, actorEmail: string, config: AppStore['config']) {
+  const owner = { Name: actorEmail.split('@')[0], EmailAddress: actorEmail };
+  if (!config.rtAuthToken || !config.rtBaseUrl.startsWith('http')) {
+    recordDiagnostic('warn', 'rt.ticket-owner', 'Skipped remote owner update; RT credentials are not configured', { ticketId, actorEmail });
+    return { success: true, message: `Ticket assigned to ${actorEmail} in local store`, syncedWithRemote: false, owner };
+  }
+
+  const startedAt = Date.now();
+  recordDiagnostic('info', 'rt.ticket-owner', 'Starting RT owner update', { ticketId, actorEmail });
+  try {
+    const current = await getRtTicketState(ticketId, config);
+    const currentStatus = String(current.data?.Status || '');
+    if (currentStatus === 'resolved') {
+      recordDiagnostic('warn', 'rt.ticket-owner', 'Rejected Take Ticket for resolved ticket', { ticketId, actorEmail });
+      return {
+        success: false,
+        message: 'Resolved tickets cannot be taken from Chat',
+        syncedWithRemote: false,
+        status: 409,
+      };
+    }
+
+    const userLookup = await lookupRtUser(actorEmail, config);
+    if (!userLookup.success || !userLookup.user?.Name) {
+      recordDiagnostic('warn', 'rt.ticket-owner', 'Interacting user was not found in RT', {
+        ticketId,
+        actorEmail,
+        lookupMessage: userLookup.message,
+      });
+      return {
+        success: false,
+        message: userLookup.message || `RT user not found for ${actorEmail}`,
+        syncedWithRemote: false,
+        status: 404,
+      };
+    }
+
+    const shouldOpen = currentStatus === 'new';
+    const lifecycle = shouldOpen ? getLifecycleLink(current.data, 'open') : undefined;
+    if (shouldOpen && !lifecycle) {
+      recordDiagnostic('warn', 'rt.ticket-owner', 'RT did not expose open transition for Take Ticket', { ticketId });
+      return {
+        success: false,
+        message: 'RT does not expose an open transition for this ticket',
+        syncedWithRemote: false,
+        status: 409,
+      };
+    }
+
+    const response = await fetch(lifecycle?._url || current.url, {
+      method: 'PUT',
+      headers: {
+        Authorization: `token ${config.rtAuthToken}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...(current.etag ? { 'If-Match': current.etag } : {}),
+      },
+      body: JSON.stringify({
+        Owner: userLookup.user.Name,
+        ...(shouldOpen ? { Status: 'open' } : {}),
+      }),
+      signal: AbortSignal.timeout(Number(process.env.OUTBOUND_TIMEOUT_MS || 8000)),
+    });
+    const data: any = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      recordDiagnostic('error', 'rt.ticket-owner', 'RT rejected owner update', {
+        ticketId,
+        actorEmail,
+        ownerName: userLookup.user.Name,
+        remoteStatus: response.status,
+        durationMs: Date.now() - startedAt,
+      });
+      return {
+        success: false,
+        message: data.message || `RT returned HTTP ${response.status}`,
+        syncedWithRemote: false,
+        status: response.status,
+      };
+    }
+
+    owner.Name = userLookup.user.Name;
+    owner.EmailAddress = userLookup.user.EmailAddress || actorEmail;
+    owner.id = userLookup.user.id;
+    recordDiagnostic('info', 'rt.ticket-owner', 'RT owner update completed', {
+      ticketId,
+      actorEmail,
+      ownerName: userLookup.user.Name,
+      statusChangedToOpen: shouldOpen,
+      remoteStatus: response.status,
+      durationMs: Date.now() - startedAt,
+    });
+    return { success: true, message: JSON.stringify(data), syncedWithRemote: true, owner };
+  } catch (err: any) {
+    recordDiagnostic('error', 'rt.ticket-owner', 'RT owner update failed', {
+      ticketId,
+      actorEmail,
+      durationMs: Date.now() - startedAt,
+      error: err.message,
+      remoteStatus: err.status,
+    });
+    return { success: false, message: err.message, syncedWithRemote: false, status: err.status };
   }
 }
 
@@ -1033,6 +1154,7 @@ app.post('/api/chat/interactive', requireChatIdentity, async (req: Request, res:
   const newStatus = paramMap.status || body.status;
   const actorEmail = body.user?.email || body.actorEmail || 'jmartin@example.org';
   const actorName = body.user?.displayName || body.actorName || 'Example Agent';
+  const isTakeTicket = actionFunction === 'take_ticket';
   recordDiagnostic('info', 'google-chat.interactive', 'Received Google Chat action', {
     actionFunction,
     ticketId,
@@ -1043,7 +1165,9 @@ app.post('/api/chat/interactive', requireChatIdentity, async (req: Request, res:
   if (!ticketId) {
     return res.status(400).json({ error: 'Missing ticketId in interactive card action' });
   }
-  try { validateStatus(newStatus); } catch (error: any) { return res.status(400).json({ error: error.message }); }
+  if (!isTakeTicket) {
+    try { validateStatus(newStatus); } catch (error: any) { return res.status(400).json({ error: error.message }); }
+  }
   const operationId = String(req.header('x-idempotency-key') || body.actionId || `${ticketId}:${actionFunction}:${newStatus || ''}:${actorEmail}`);
   if (store.operationReceipts[operationId]) return res.status(200).json({ success: true, duplicate: true });
   store.operationReceipts[operationId] = { status: 'processing', updatedAt: new Date().toISOString() };
@@ -1052,14 +1176,24 @@ app.post('/api/chat/interactive', requireChatIdentity, async (req: Request, res:
   // Update in local store
   const ticket = store.tickets.find((t) => String(t.id) === String(ticketId));
   const oldStatus = ticket ? ticket.Status : 'open';
+  if (isTakeTicket && ticket?.Status === 'resolved') {
+    recordDiagnostic('warn', 'google-chat.interactive', 'Rejected Take Ticket for resolved local ticket', { ticketId, actorEmail });
+    return res.status(409).json({ success: false, message: 'Resolved tickets cannot be taken from Chat' });
+  }
 
   // Sync to remote RT REST 2.0
-  let rtSyncRes = { success: true, message: 'Updated in local store', syncedWithRemote: false };
-  if (newStatus) {
+  let rtSyncRes: any = { success: true, message: 'Updated in local store', syncedWithRemote: false };
+  if (isTakeTicket) {
+    rtSyncRes = await takeRtTicketInRemote(ticketId, actorEmail, store.config);
+  } else if (newStatus) {
     rtSyncRes = await updateRtTicketInRemote(ticketId, newStatus, store.config);
   }
 
-  if (ticket && newStatus && rtSyncRes.success) {
+  if (ticket && isTakeTicket && rtSyncRes.success) {
+    ticket.Owner = rtSyncRes.owner;
+    if (!ticket.History) ticket.History = [];
+    ticket.History.push({ id: ticket.History.length + 1, type: 'OwnerChange', actor: actorEmail, content: `Ticket assigned to ${rtSyncRes.owner?.Name || actorEmail}`, timestamp: new Date().toISOString() });
+  } else if (ticket && newStatus && rtSyncRes.success) {
     ticket.Status = newStatus;
     if (!ticket.History) ticket.History = [];
     ticket.History.push({ id: ticket.History.length + 1, type: 'StatusChange', actor: actorEmail, content: `Status updated to '${newStatus}' directly via Google Chat button`, timestamp: new Date().toISOString() });
@@ -1072,9 +1206,9 @@ app.post('/api/chat/interactive', requireChatIdentity, async (req: Request, res:
     ticketId,
     actorEmail,
     actorName,
-    actionType: 'status_change',
+    actionType: isTakeTicket ? 'owner_assignment' : 'status_change',
     previousValue: oldStatus,
-    newValue: newStatus,
+    newValue: isTakeTicket ? rtSyncRes.owner?.Name || actorEmail : newStatus,
     rtSyncStatus: rtSyncRes.success ? 'synced' : 'failed',
     rtResponseMessage: rtSyncRes.message,
   };
@@ -1096,9 +1230,10 @@ app.post('/api/chat/interactive', requireChatIdentity, async (req: Request, res:
         RequestorEmail: ticket ? ticket.RequestorEmail : w.requestorEmail,
         RequestorName: ticket ? ticket.RequestorName : w.resolvedRtUserName,
         Created: ticket ? ticket.Created : w.timestamp,
-        Content: ticket ? ticket.Content : '',
-        rtUserId: w.resolvedRtUserId,
-        rtBaseUrl: store.config.rtBaseUrl,
+         Content: ticket ? ticket.Content : '',
+         rtUserId: w.resolvedRtUserId,
+         Owner: ticket?.Owner,
+         rtBaseUrl: store.config.rtBaseUrl,
       });
     }
   });
@@ -1111,7 +1246,7 @@ app.post('/api/chat/interactive', requireChatIdentity, async (req: Request, res:
     status: newStatus,
     syncedWithRemote: rtSyncRes.syncedWithRemote,
     success: rtSyncRes.success,
-    message: rtSyncRes.message,
+    remoteStatus: rtSyncRes.status,
   });
 
   // Return Google Chat Action Response to update the card in-place
@@ -1126,6 +1261,7 @@ app.post('/api/chat/interactive', requireChatIdentity, async (req: Request, res:
     Created: ticket ? ticket.Created : new Date().toISOString(),
     Content: ticket ? ticket.Content : '',
     rtUserId: ticket?.rtUserId,
+    Owner: ticket?.Owner,
     rtBaseUrl: store.config.rtBaseUrl,
   });
 
@@ -1134,7 +1270,11 @@ app.post('/api/chat/interactive', requireChatIdentity, async (req: Request, res:
       type: 'UPDATE_MESSAGE',
     },
     cardsV2: [updatedCard],
-    message: rtSyncRes.success ? `Ticket #${ticketId} status successfully changed to ${newStatus}` : rtSyncRes.message,
+    message: rtSyncRes.success
+      ? isTakeTicket
+        ? `Ticket #${ticketId} assigned to ${rtSyncRes.owner?.Name || actorEmail}`
+        : `Ticket #${ticketId} status successfully changed to ${newStatus}`
+      : rtSyncRes.message,
     sync: rtSyncRes,
   });
 });

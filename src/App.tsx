@@ -176,6 +176,23 @@ export default function App() {
     await fetchData();
   };
 
+  const handleTakeTicket = async (ticketId: string | number) => {
+    const currentUserEmail = user?.email || 'jmartin@example.org';
+    const currentUserName = user?.displayName || 'Example Agent';
+    const res = await apiFetch('/api/chat/interactive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        actionMethodName: 'take_ticket',
+        ticketId,
+        actorEmail: currentUserEmail,
+        actorName: currentUserName,
+      }),
+    });
+    if (!res.ok) throw new Error(`Failed to take ticket #${ticketId}: ${await readErrorDetail(res)}`);
+    await fetchData();
+  };
+
   // Add Correspondence from Chat or Dashboard
   const handleAddCorrespondence = async (
     ticketId: string | number,
@@ -322,6 +339,7 @@ export default function App() {
                 selectedTicketId={selectedTicketId}
                 onSelectTicket={(id) => setSelectedTicketId(id)}
                 onUpdateStatus={handleUpdateStatus}
+                onTakeTicket={handleTakeTicket}
                 onAddCorrespondence={handleAddCorrespondence}
                 currentUserEmail={currentUserEmail}
                 rtBaseUrl={config.rtBaseUrl}

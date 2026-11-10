@@ -63,6 +63,19 @@ Status actions may use:
 }
 ```
 
+The `take_ticket` action assigns the interacting Google Chat user as RT owner:
+
+```json
+{
+  "actionMethodName": "take_ticket",
+  "ticketId": 123,
+  "actorEmail": "agent@example.org",
+  "actorName": "Support Agent"
+}
+```
+
+RT Connect resolves `actorEmail` to an RT user, sends `Owner` through the RT ticket update endpoint, and changes local ownership only after RT confirms success. Taking a `new` ticket also transitions it to `open`; other non-resolved statuses are preserved. Resolved tickets reject this action with `409` and never reopen. The RT user must exist and have permission to modify the ticket.
+
 Responses:
 
 - `200`: action applied or marked duplicate
